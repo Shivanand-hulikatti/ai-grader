@@ -1,0 +1,18 @@
+./bin
+
+.env
+.env.local
+.env.development.local
+
+# Ignore all log files and keep the logs directory
+logs/
+!logs/.keep
+# Ignore all files in the public directory except for .keep
+public/*
+!public/.keep
+# Ignore all files in the src directory except for .keep
+src/*
+!src/.keep
+# Ignore all files in the config directory except for .keep
+config/*
+!config/.keep
