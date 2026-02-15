@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log"
 
 	"github.com/Shivanand-hulikatti/ai-grader/internal/models"
 	"github.com/jackc/pgx/v5"
@@ -19,8 +20,8 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // CreateUser inserts a new user
 func (r *Repository) CreateUser(ctx context.Context, user *models.User) error {
 	query := `
-        INSERT INTO users (email, password_hash, full_name, role)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO users (email, password_hash, full_name)
+        VALUES ($1, $2, $3)
         RETURNING id, created_at, updated_at
     `
 
@@ -34,7 +35,7 @@ func (r *Repository) CreateUser(ctx context.Context, user *models.User) error {
 // GetUserByEmail retrieves user by email
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	query := `
-        SELECT id, email, password_hash, full_name, role, created_at, updated_at
+        SELECT id, email, password_hash, full_name, created_at, updated_at
         FROM users
         WHERE email = $1
     `
@@ -49,6 +50,8 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*models.
 		&user.UpdatedAt,
 	)
 
+	log.Printf("GetUserByEmail: email=%s, err=%v", email, err)
+
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -62,7 +65,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*models.
 // GetUserByID retrieves user by ID
 func (r *Repository) GetUserByID(ctx context.Context, id string) (*models.User, error) {
 	query := `
-        SELECT id, email, password_hash, full_name, role, created_at, updated_at
+        SELECT id, email, password_hash, full_name, created_at, updated_at
         FROM users
         WHERE id = $1
     `

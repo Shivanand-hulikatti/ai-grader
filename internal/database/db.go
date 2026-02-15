@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,6 +39,7 @@ func Connect() error {
 	if err := pool.Ping(context.Background()); err != nil {
 		return fmt.Errorf("unable to ping database: %w", err)
 	}
+	log.Println("Connected to database successfully")
 
 	Pool = pool
 	return nil

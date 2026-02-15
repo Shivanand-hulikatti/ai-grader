@@ -1,0 +1,14 @@
+version: '1.0'
+services:
+  jobsporto-beta:
+    image: postgres:16.6
+    environment:
+      POSTGRES_USER: ai-grader
+      POSTGRES_PASSWORD: ai-grader
+      POSTGRES_DB: ai-grader
+    volumes:
+      - ~/docker_data/ai-grader/postgres:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+
+    
