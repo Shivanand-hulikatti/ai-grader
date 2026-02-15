@@ -28,7 +28,6 @@ func (r *Repository) CreateUser(ctx context.Context, user *models.User) error {
 		user.Email,
 		user.PasswordHash,
 		user.FullName,
-		user.Role,
 	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 }
 
@@ -46,7 +45,6 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*models.
 		&user.Email,
 		&user.PasswordHash,
 		&user.FullName,
-		&user.Role,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -75,7 +73,6 @@ func (r *Repository) GetUserByID(ctx context.Context, id string) (*models.User, 
 		&user.Email,
 		&user.PasswordHash,
 		&user.FullName,
-		&user.Role,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
