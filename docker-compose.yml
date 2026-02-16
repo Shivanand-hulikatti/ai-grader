@@ -1,14 +1,67 @@
-version: '1.0'
+version: '3.8'
+
 services:
-  jobsporto-beta:
+  postgres:
     image: postgres:16.6
+    container_name: ai-grader-db
     environment:
       POSTGRES_USER: ai-grader
       POSTGRES_PASSWORD: ai-grader
-      POSTGRES_DB: ai-grader
-    volumes:
-      - ~/docker_data/ai-grader/postgres:/var/lib/postgresql/data
+      POSTGRES_DB: ai_grader
     ports:
-      - 5432:5432
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/migrations
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-    
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: ai-grader-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ai-grader-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  # Uncomment to run upload service in Docker
+  # upload-service:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.upload
+  #   container_name: ai-grader-upload
+  #   depends_on:
+  #     - postgres
+  #     - kafka
+  #   ports:
+  #     - "8081:8081"
+  #   environment:
+  #     DATABASE_URL: postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
+  #     UPLOAD_SERVICE_PORT: 8081
+  #     AWS_REGION: ${AWS_REGION}
+  #     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  #     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  #     S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+  #     KAFKA_BROKERS: kafka:9092
+  #     KAFKA_TOPIC: paper-uploaded
+
+volumes:
+  postgres_data:

@@ -1,59 +1,61 @@
-AI Paper Evaluator - Complete Guide
-Build an AI-powered paper grading system in 1 week using Go, PostgreSQL, Kafka, AWS S3, and OpenAI API.
-🎯 What We're Building
-A microservices system that:
-
-Accepts PDF paper uploads
-Stores PDFs in AWS S3
-Extracts text and sends to AI for grading
-Returns grades and feedback via API
-Uses Kafka for async processing
-
-📋 Prerequisites
-bash# Required installations
-- Go 1.21+
-- Docker & Docker Compose
-- PostgreSQL 15+
-- AWS Account (for S3)
-- OpenAI API Key
-
-
-🏗️ System Architecture
-User → API Gateway → Upload Service → S3 + Kafka
-                         ↓
-                      Kafka → Grading Service → OpenAI API
-                         ↓
-                   Results Service ← PostgreSQL
-
 ai-paper-evaluator/
-│
 ├── cmd/
+│   ├── gateway/
+│   │   └── main.go
 │   ├── upload-service/
-│   │     └── main.go
+│   │   └── main.go
 │   ├── grading-service/
-│   │     └── main.go
-│   ├── results-service/
-│   │     └── main.go
-│   └── gateway/
-│         └── main.go
+│   │   └── main.go
+│   └── results-service/
+│       └── main.go
 │
 ├── internal/
-│   ├── config/
 │   ├── models/
+│   │   └── models.go
+│   │
 │   ├── database/
-│   ├── repository/
+│   │   ├── db.go              # PGX connection
+│   │
+│   ├── auth/
+│   │   ├── jwt.go              # JWT token handling
+│   │   ├── password.go         # Password hashing
+│   │   ├── repository.go       # Database ops
+│   │   └── middleware.go       # Auth middleware
+│   │
+│   ├── upload/
+│   │   ├── service.go          # Business logic
+│   │   └── repository.go       # Database operations
+│   │
+│   ├── grading/
+│   │   ├── handler.go
+│   │   ├── service.go
+│   │   ├── repository.go
+│   │   └── openai.go           # OpenAI client
+│   │
+│   ├── results/
+│   │   ├── handler.go
+│   │   ├── service.go
+│   │   └── repository.go
+│   │
 │   ├── s3/
+│   │   └── client.go           # S3 operations
+│   │
 │   ├── kafka/
-│   ├── outbox/
-│   ├── openai/
-│   └── http/
+│   │   ├── producer.go         # Kafka producer
+│   │   ├── consumer.go         # Kafka consumer
+│   │   └── outbox.go           # Outbox pattern
+│   │
+│   └── pdf/
+│       └── parser.go           # PDF text extraction
 │
 ├── migrations/
-│   ├── 001_init.sql
-│ 
+│   ├── 001_schema.sql
+│   └── 001_schema.down.sql
+│
+├── .env.example
+├── .gitignore
 ├── docker-compose.yml
-├── .env
+├── Makefile
 ├── go.mod
+├── go.sum
 └── README.md
-
-
