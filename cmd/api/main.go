@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -54,11 +55,13 @@ func main() {
 	// Upload Service proxy
 	uploadURL, _ := url.Parse("http://localhost:" + os.Getenv("UPLOAD_SERVICE_PORT"))
 	uploadProxy := httputil.NewSingleHostReverseProxy(uploadURL)
+	uploadProxy.Director = withUserHeader(uploadProxy.Director)
 	protected.PathPrefix("/upload").Handler(uploadProxy)
 
 	// Results Service proxy
 	resultsURL, _ := url.Parse("http://localhost:" + os.Getenv("RESULTS_SERVICE_PORT"))
 	resultsProxy := httputil.NewSingleHostReverseProxy(resultsURL)
+	resultsProxy.Director = withUserHeader(resultsProxy.Director)
 	protected.PathPrefix("/results").Handler(resultsProxy)
 
 	// Start server
@@ -71,5 +74,16 @@ func main() {
 
 	if err := http.ListenAndServe(":"+port, router); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func withUserHeader(baseDirector func(*http.Request)) func(*http.Request) {
+	return func(req *http.Request) {
+		baseDirector(req)
+
+		if claims, ok := auth.GetUserFromContext(req); ok {
+			req.Header.Set("X-User-ID", claims.UserID)
+			req = req.WithContext(context.WithValue(req.Context(), auth.UserContextKey, claims))
+		}
 	}
 }

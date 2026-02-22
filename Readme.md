@@ -1,3 +1,6 @@
+## Project Structure
+
+```text
 ai-paper-evaluator/
 ├── cmd/
 │   ├── gateway/
@@ -59,3 +62,67 @@ ai-paper-evaluator/
 ├── go.mod
 ├── go.sum
 └── README.md
+```
+
+## Results Service API
+
+All `/results` endpoints are protected and must be called through the API gateway with a valid JWT.
+
+### 1) List user results
+
+```bash
+curl -X GET "http://localhost:8080/results?limit=20&offset=0" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+Response shape:
+
+```json
+{
+  "results": [
+    {
+      "submission": {
+        "id": "...",
+        "user_id": "...",
+        "status": "graded",
+        "created_at": "2026-02-23T12:00:00Z"
+      },
+      "grade": {
+        "id": "...",
+        "submission_id": "...",
+        "score": 84,
+        "feedback": "{\"overall_score\":84,\"summary\":\"...\",\"criteria\":[...]}"
+      }
+    }
+  ],
+  "count": 1
+}
+```
+
+### 2) Get a single submission result
+
+```bash
+curl -X GET "http://localhost:8080/results/<submission_id>" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+Response shape:
+
+```json
+{
+  "submission": {
+    "id": "...",
+    "user_id": "...",
+    "status": "graded",
+    "created_at": "2026-02-23T12:00:00Z"
+  },
+  "grade": {
+    "id": "...",
+    "submission_id": "...",
+    "score": 84,
+    "feedback": "{\"overall_score\":84,\"summary\":\"...\",\"criteria\":[...]}"
+  }
+}
+```
+
+If grading is still in progress, `submission.status` may be `uploaded` or `processing` and `grade` may be `null`.
