@@ -79,3 +79,29 @@ type SubmissionResponse struct {
 	Submission Submission `json:"submission"`
 	Grade      *Grade     `json:"grade,omitempty"`
 }
+
+type PaperUploadedEvent struct {
+	SubmissionID string `json:"submission_id"`
+	S3Key        string `json:"s3_key"`
+	UserID       string `json:"user_id"`
+}
+
+type GradingCriterion struct {
+	Name    string `json:"name"`
+	Score   int    `json:"score"`
+	Comment string `json:"comment"`
+}
+
+type GradingFeedback struct {
+	OverallScore int                `json:"overall_score"`
+	Summary      string             `json:"summary"`
+	Criteria     []GradingCriterion `json:"criteria"`
+}
+
+type PaperGradedEvent struct {
+	SubmissionID string          `json:"submission_id"`
+	GradeID      string          `json:"grade_id"`
+	Status       string          `json:"status"`
+	Score        int             `json:"score"`
+	Feedback     GradingFeedback `json:"feedback"`
+}

@@ -98,3 +98,22 @@ func (c *Client) DeleteFile(ctx context.Context, s3Key string) error {
 
 	return nil
 }
+
+// DownloadFile downloads file content from S3.
+func (c *Client) DownloadFile(ctx context.Context, s3Key string) ([]byte, error) {
+	result, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucketName),
+		Key:    aws.String(s3Key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to download file from S3: %w", err)
+	}
+	defer result.Body.Close()
+
+	content, err := io.ReadAll(result.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read S3 object body: %w", err)
+	}
+
+	return content, nil
+}

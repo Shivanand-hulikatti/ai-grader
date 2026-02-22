@@ -16,3 +16,4 @@ src/*
 # Ignore all files in the config directory except for .keep
 config/*
 !config/.keep
+./bin
