@@ -126,3 +126,58 @@ Response shape:
 ```
 
 If grading is still in progress, `submission.status` may be `uploaded` or `processing` and `grade` may be `null`.
+
+## Quick Local Setup
+
+### Prerequisites
+
+- Go 1.25+
+- Docker + Docker Compose
+- AWS S3 bucket and credentials
+- Google Vision API key
+- OpenRouter API key
+
+### 1) Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Update `.env` with real values for:
+
+- `DATABASE_URL`
+- `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`
+- `GOOGLE_VISION_API_KEY`
+- `OPENROUTER_API_KEY`
+- `GLOBAL_GRADING_RUBRIC`
+
+### 2) Start local infrastructure
+
+```bash
+docker compose up -d postgres zookeeper kafka
+```
+
+### 3) Run migrations
+
+```bash
+docker exec -i ai-grader-db psql -U ai-grader -d ai_grader < migrations/001_schema.sql
+```
+
+### 4) Start services (separate terminals)
+
+```bash
+go run ./cmd/upload
+go run ./cmd/grader
+go run ./cmd/results
+go run ./cmd/api
+```
+
+### 5) Smoke check
+
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8081/health
+curl http://localhost:8083/health
+```
+
+Then register/login via gateway, upload a PDF, and query `/results`.
