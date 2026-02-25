@@ -48,17 +48,19 @@ func (r *Repository) GetSubmissionByID(ctx context.Context, id string) (*models.
     `
 
 	var sub models.Submission
+	var rollNo, course, answerScheme, errorMessage *string
+
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&sub.ID,
 		&sub.UserID,
-		&sub.RollNo,
-		&sub.Course,
+		&rollNo,
+		&course,
 		&sub.MaxScore,
-		&sub.AnswerScheme,
+		&answerScheme,
 		&sub.S3Key,
 		&sub.FileSize,
 		&sub.Status,
-		&sub.ErrorMessage,
+		&errorMessage,
 		&sub.CreatedAt,
 		&sub.UpdatedAt,
 	)
@@ -68,6 +70,19 @@ func (r *Repository) GetSubmissionByID(ctx context.Context, id string) (*models.
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if rollNo != nil {
+		sub.RollNo = *rollNo
+	}
+	if course != nil {
+		sub.Course = *course
+	}
+	if answerScheme != nil {
+		sub.AnswerScheme = *answerScheme
+	}
+	if errorMessage != nil {
+		sub.ErrorMessage = errorMessage
 	}
 
 	return &sub, nil
@@ -104,23 +119,39 @@ func (r *Repository) GetUserSubmissions(ctx context.Context, userID string) ([]*
 	var submissions []*models.Submission
 	for rows.Next() {
 		var sub models.Submission
+		var rollNo, course, answerScheme, errorMessage *string
+
 		err := rows.Scan(
 			&sub.ID,
 			&sub.UserID,
-			&sub.RollNo,
-			&sub.Course,
+			&rollNo,
+			&course,
 			&sub.MaxScore,
-			&sub.AnswerScheme,
+			&answerScheme,
 			&sub.S3Key,
 			&sub.FileSize,
 			&sub.Status,
-			&sub.ErrorMessage,
+			&errorMessage,
 			&sub.CreatedAt,
 			&sub.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
+
+		if rollNo != nil {
+			sub.RollNo = *rollNo
+		}
+		if course != nil {
+			sub.Course = *course
+		}
+		if answerScheme != nil {
+			sub.AnswerScheme = *answerScheme
+		}
+		if errorMessage != nil {
+			sub.ErrorMessage = errorMessage
+		}
+
 		submissions = append(submissions, &sub)
 	}
 

@@ -143,17 +143,19 @@ func (r *Repository) GetSubmissionForGrading(ctx context.Context, submissionID s
     `
 
 	var sub models.Submission
+	var rollNo, course, answerScheme, errorMessage *string
+
 	err := r.db.QueryRow(ctx, query, submissionID).Scan(
 		&sub.ID,
 		&sub.UserID,
-		&sub.RollNo,
-		&sub.Course,
+		&rollNo,
+		&course,
 		&sub.MaxScore,
-		&sub.AnswerScheme,
+		&answerScheme,
 		&sub.S3Key,
 		&sub.FileSize,
 		&sub.Status,
-		&sub.ErrorMessage,
+		&errorMessage,
 		&sub.CreatedAt,
 		&sub.UpdatedAt,
 	)
@@ -162,6 +164,19 @@ func (r *Repository) GetSubmissionForGrading(ctx context.Context, submissionID s
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if rollNo != nil {
+		sub.RollNo = *rollNo
+	}
+	if course != nil {
+		sub.Course = *course
+	}
+	if answerScheme != nil {
+		sub.AnswerScheme = *answerScheme
+	}
+	if errorMessage != nil {
+		sub.ErrorMessage = errorMessage
 	}
 
 	return &sub, nil

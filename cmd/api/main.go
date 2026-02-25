@@ -1,12 +1,13 @@
 package main
 
 import (
-	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"time"
 
 	"github.com/Shivanand-hulikatti/ai-grader/internal/auth"
 	"github.com/Shivanand-hulikatti/ai-grader/internal/database"
@@ -19,6 +20,19 @@ var (
 	jwtSecret string
 	authRepo  *auth.Repository
 )
+
+// proxyTransport is shared by all reverse proxies.
+// DisableKeepAlives is intentionally left false (we want connection pooling)
+// but IdleConnTimeout is short so stale connections are not reused for POSTs,
+// which is the most common cause of "unexpected EOF" on a reverse proxy.
+var proxyTransport http.RoundTripper = &http.Transport{
+	DisableKeepAlives:   false,
+	MaxIdleConnsPerHost: 10,
+	IdleConnTimeout:     30 * time.Second,
+	// Must be >= the upstream handler's own timeout (upload handler: 4 min).
+	ResponseHeaderTimeout: 5 * time.Minute,
+	ExpectContinueTimeout: 1 * time.Second,
+}
 
 func main() {
 	// Load environment
@@ -53,15 +67,21 @@ func main() {
 	protected.Use(auth.AuthMiddleware(jwtSecret))
 
 	// Upload Service proxy
-	uploadURL, _ := url.Parse("http://localhost:" + os.Getenv("UPLOAD_SERVICE_PORT"))
-	uploadProxy := httputil.NewSingleHostReverseProxy(uploadURL)
-	uploadProxy.Director = withUserHeader(uploadProxy.Director)
+	uploadServiceURL := os.Getenv("UPLOAD_SERVICE_URL")
+	if uploadServiceURL == "" {
+		uploadServiceURL = "http://localhost:" + os.Getenv("UPLOAD_SERVICE_PORT")
+	}
+	uploadURL, _ := url.Parse(uploadServiceURL)
+	uploadProxy := newProxy(uploadURL, "upload-service")
 	protected.PathPrefix("/upload").Handler(uploadProxy)
 
 	// Results Service proxy
-	resultsURL, _ := url.Parse("http://localhost:" + os.Getenv("RESULTS_SERVICE_PORT"))
-	resultsProxy := httputil.NewSingleHostReverseProxy(resultsURL)
-	resultsProxy.Director = withUserHeader(resultsProxy.Director)
+	resultsServiceURL := os.Getenv("RESULTS_SERVICE_URL")
+	if resultsServiceURL == "" {
+		resultsServiceURL = "http://localhost:" + os.Getenv("RESULTS_SERVICE_PORT")
+	}
+	resultsURL, _ := url.Parse(resultsServiceURL)
+	resultsProxy := newProxy(resultsURL, "results-service")
 	protected.PathPrefix("/results").Handler(resultsProxy)
 
 	// Start server
@@ -77,13 +97,40 @@ func main() {
 	}
 }
 
-func withUserHeader(baseDirector func(*http.Request)) func(*http.Request) {
-	return func(req *http.Request) {
-		baseDirector(req)
+// newProxy builds a reverse proxy for the given backend URL.
+// It injects the authenticated user's ID as X-User-ID and provides a
+// structured JSON error handler so clients always get valid JSON back.
+func newProxy(target *url.URL, serviceName string) *httputil.ReverseProxy {
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = proxyTransport
 
+	// FlushInterval -1 means "flush immediately" — required for streaming
+	// request bodies (multipart uploads) so bytes reach the backend as they
+	// arrive instead of being buffered until the upload completes.
+	proxy.FlushInterval = -1
+
+	// Wrap the default Director to inject the X-User-ID header.
+	defaultDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		defaultDirector(req)
+		// The auth middleware stored claims in the request context; pull them
+		// out and forward the user ID to the downstream service.
 		if claims, ok := auth.GetUserFromContext(req); ok {
 			req.Header.Set("X-User-ID", claims.UserID)
-			req = req.WithContext(context.WithValue(req.Context(), auth.UserContextKey, claims))
 		}
 	}
+
+	// ErrorHandler returns structured JSON instead of Go's default plain-text
+	// "Bad Gateway" page, and logs enough detail to diagnose connection errors.
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("[proxy] %s error for %s %s: %v", serviceName, r.Method, r.URL.Path, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "upstream_unavailable",
+			"message": serviceName + " is temporarily unavailable, please retry",
+		})
+	}
+
+	return proxy
 }

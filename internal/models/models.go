@@ -21,7 +21,7 @@ type Submission struct {
 	S3Key        string    `json:"s3_key"`
 	FileSize     int64     `json:"file_size"`
 	Status       string    `json:"status"`
-	ErrorMessage string    `json:"error_message,omitempty"`
+	ErrorMessage *string   `json:"error_message,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -42,7 +42,7 @@ type OutboxEvent struct {
 	Payload      string     `json:"payload"` // JSON string
 	Status       string     `json:"status"`
 	AttemptNo    int        `json:"attempt_no"`
-	Error        string     `json:"error,omitempty"`
+	Error        *string    `json:"error,omitempty"`
 	PublishedAt  *time.Time `json:"published_at,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }

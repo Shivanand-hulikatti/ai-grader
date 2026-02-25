@@ -96,10 +96,14 @@ func main() {
 
 	// Setup graceful shutdown
 	server := &http.Server{
-		Addr:         ":" + uploadServicePort,
-		Handler:      http.DefaultServeMux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:    ":" + uploadServicePort,
+		Handler: http.DefaultServeMux,
+		// ReadHeaderTimeout guards against slow-loris attacks while still
+		// allowing large PDF bodies to stream in without a deadline.
+		ReadHeaderTimeout: 30 * time.Second,
+		// WriteTimeout must cover: body read + PDF validation + S3 upload.
+		// 5 minutes is generous but safe for up to 25 MB on slow connections.
+		WriteTimeout: 5 * time.Minute,
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -263,10 +267,12 @@ func respondError(w http.ResponseWriter, statusCode int, errorCode, message stri
 	})
 }
 
-// withTimeout adds a timeout to the request context
+// withTimeout adds a per-request deadline to the context.
+// 4 minutes: enough headroom for ParseMultipartForm + PDF validation + S3 upload
+// of up to 25 MB, without tying up the goroutine indefinitely on hangs.
 func withTimeout(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
 		defer cancel()
 		next(w, r.WithContext(ctx))
 	}

@@ -29,6 +29,7 @@ func (r *Repository) GetSubmissionWithGrade(ctx context.Context, submissionID, u
 
 	var sub models.Submission
 	var grade models.Grade
+	var rollNo, course, answerScheme, errorMessage *string
 	var gradeID *string
 	var score *int
 	var feedback *string
@@ -38,14 +39,14 @@ func (r *Repository) GetSubmissionWithGrade(ctx context.Context, submissionID, u
 	err := r.db.QueryRow(ctx, query, submissionID, userID).Scan(
 		&sub.ID,
 		&sub.UserID,
-		&sub.RollNo,
-		&sub.Course,
+		&rollNo,
+		&course,
 		&sub.MaxScore,
-		&sub.AnswerScheme,
+		&answerScheme,
 		&sub.S3Key,
 		&sub.FileSize,
 		&sub.Status,
-		&sub.ErrorMessage,
+		&errorMessage,
 		&sub.CreatedAt,
 		&sub.UpdatedAt,
 		&gradeID,
@@ -59,6 +60,19 @@ func (r *Repository) GetSubmissionWithGrade(ctx context.Context, submissionID, u
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if rollNo != nil {
+		sub.RollNo = *rollNo
+	}
+	if course != nil {
+		sub.Course = *course
+	}
+	if answerScheme != nil {
+		sub.AnswerScheme = *answerScheme
+	}
+	if errorMessage != nil {
+		sub.ErrorMessage = errorMessage
 	}
 
 	result := &models.SubmissionResponse{Submission: sub}
@@ -101,6 +115,7 @@ func (r *Repository) ListSubmissionsWithGrades(ctx context.Context, userID strin
 	for rows.Next() {
 		var sub models.Submission
 		var grade models.Grade
+		var rollNo, course, answerScheme, errorMessage *string
 		var gradeID *string
 		var score *int
 		var feedback *string
@@ -110,14 +125,14 @@ func (r *Repository) ListSubmissionsWithGrades(ctx context.Context, userID strin
 		err := rows.Scan(
 			&sub.ID,
 			&sub.UserID,
-			&sub.RollNo,
-			&sub.Course,
+			&rollNo,
+			&course,
 			&sub.MaxScore,
-			&sub.AnswerScheme,
+			&answerScheme,
 			&sub.S3Key,
 			&sub.FileSize,
 			&sub.Status,
-			&sub.ErrorMessage,
+			&errorMessage,
 			&sub.CreatedAt,
 			&sub.UpdatedAt,
 			&gradeID,
@@ -128,6 +143,19 @@ func (r *Repository) ListSubmissionsWithGrades(ctx context.Context, userID strin
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if rollNo != nil {
+			sub.RollNo = *rollNo
+		}
+		if course != nil {
+			sub.Course = *course
+		}
+		if answerScheme != nil {
+			sub.AnswerScheme = *answerScheme
+		}
+		if errorMessage != nil {
+			sub.ErrorMessage = errorMessage
 		}
 
 		item := models.SubmissionResponse{Submission: sub}

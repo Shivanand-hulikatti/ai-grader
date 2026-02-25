@@ -62,19 +62,18 @@ func main() {
 		log.Fatal("Failed to initialize S3 client:", err)
 	}
 
-	visionAPIKey := os.Getenv("GOOGLE_VISION_API_KEY")
 	openRouterKey := os.Getenv("OPENROUTER_API_KEY")
-	openRouterModel := os.Getenv("OPENROUTER_MODEL")
+	openRouterModel := os.Getenv("OPENROUTER_MODEL") // defaults to qwen3-vl-235b if empty
 	globalRubric := os.Getenv("GLOBAL_GRADING_RUBRIC")
 
-	if visionAPIKey == "" || openRouterKey == "" || strings.TrimSpace(globalRubric) == "" {
-		log.Fatal("Missing required env vars: GOOGLE_VISION_API_KEY, OPENROUTER_API_KEY, GLOBAL_GRADING_RUBRIC")
+	if openRouterKey == "" || strings.TrimSpace(globalRubric) == "" {
+		log.Fatal("Missing required env vars: OPENROUTER_API_KEY, GLOBAL_GRADING_RUBRIC")
 	}
 
 	repo := grading.NewRepository(database.Pool)
-	parser := pdf.NewParser(visionAPIKey)
+	renderer := pdf.NewRenderer()
 	llm := grading.NewOpenRouterClient(openRouterKey, openRouterModel)
-	service := grading.NewService(repo, s3Client, parser, llm, globalRubric)
+	service := grading.NewService(repo, s3Client, renderer, llm, globalRubric)
 
 	consumer := kafka.NewConsumer(kafkaBrokers, uploadedTopic, groupID)
 	defer consumer.Close()
@@ -109,7 +108,7 @@ func main() {
 		}
 	}()
 
-	log.Println("Grader service started")
+	log.Println("Grader service started (Vision-LLM mode)")
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

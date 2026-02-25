@@ -15,11 +15,12 @@ type Producer struct {
 // NewProducer creates a new Kafka producer
 func NewProducer(brokers []string) *Producer {
 	writer := &kafka.Writer{
-		Addr:         kafka.TCP(brokers...),
-		Balancer:     &kafka.Hash{},    // Hash based on key for ordering
-		RequiredAcks: kafka.RequireAll, // Wait for all replicas (strongest durability)
-		Async:        false,            // Synchronous writes for reliability
-		Compression:  kafka.Snappy,
+		Addr:                   kafka.TCP(brokers...),
+		Balancer:               &kafka.Hash{},    // Hash based on key for ordering
+		RequiredAcks:           kafka.RequireAll, // Wait for all replicas (strongest durability)
+		Async:                  false,            // Synchronous writes for reliability
+		Compression:            kafka.Snappy,
+		AllowAutoTopicCreation: true, // Let the broker create the topic on first write
 	}
 
 	return &Producer{
