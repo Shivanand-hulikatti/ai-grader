@@ -14,7 +14,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/migrations
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ai-grader"]
+      test: ["CMD-SHELL", "pg_isready -U ai-grader -d ai_grader"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,30 +38,106 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
-  # Uncomment to run upload service in Docker
-  # upload-service:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.upload
-  #   container_name: ai-grader-upload
-  #   depends_on:
-  #     - postgres
-  #     - kafka
-  #   ports:
-  #     - "8081:8081"
-  #   environment:
-  #     DATABASE_URL: postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
-  #     UPLOAD_SERVICE_PORT: 8081
-  #     AWS_REGION: ${AWS_REGION}
-  #     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-  #     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-  #     S3_BUCKET_NAME: ${S3_BUCKET_NAME}
-  #     KAFKA_BROKERS: kafka:9092
-  #     KAFKA_TOPIC: paper-uploaded
+  api-gateway:
+    image: golang:1.25
+    container_name: ai-grader-api
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: go run ./cmd/api
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET:-supersecretkey}
+      - GATEWAY_PORT=8080
+      - UPLOAD_SERVICE_URL=http://upload-service:8081
+      - RESULTS_SERVICE_URL=http://results-service:8083
+
+  upload-service:
+    image: golang:1.25
+    container_name: ai-grader-upload
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: go run ./cmd/upload
+    depends_on:
+      - postgres
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      - DATABASE_URL=postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
+      - UPLOAD_SERVICE_PORT=8081
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - KAFKA_BROKERS=kafka:29092
+      - KAFKA_TOPIC=paper-uploaded
+
+  grader-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.grader
+    container_name: ai-grader-grader
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    environment:
+      - DATABASE_URL=postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_TOPIC=paper-uploaded
+      - KAFKA_GRADED_TOPIC=paper-graded
+      - KAFKA_CONSUMER_GROUP_ID=grader-consumer-group
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-qwen/qwen3-vl-235b-a22b-thinking}
+      - GLOBAL_GRADING_RUBRIC=${GLOBAL_GRADING_RUBRIC}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ai-grader-kafka-init
+    depends_on:
+      - kafka
+    # Wait for Kafka to be ready, then create both topics (idempotent).
+    entrypoint: ["/bin/sh", "-c",
+      "echo 'Waiting for Kafka...' &&
+       cub kafka-ready -b kafka:29092 1 30 &&
+       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic paper-uploaded --partitions 1 --replication-factor 1 &&
+       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic paper-graded  --partitions 1 --replication-factor 1 &&
+       echo 'Topics ready.'"
+    ]
+    restart: on-failure
+
+  results-service:
+    image: golang:1.25
+    container_name: ai-grader-results
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: go run ./cmd/results
+    depends_on:
+      - postgres
+    ports:
+      - "8083:8083"
+    environment:
+      - DATABASE_URL=postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
+      - RESULTS_SERVICE_PORT=8083
 
 volumes:
   postgres_data:

@@ -1,0 +1,39 @@
+# ── Stage 1: build ─────────────────────────────────────────────────────────
+FROM golang:1.25-bookworm AS builder
+
+# Install libmupdf dev headers required by go-fitz (CGO)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmupdf-dev \
+    libfreetype-dev \
+    libjpeg62-turbo-dev \
+    libopenjp2-7-dev \
+    libharfbuzz-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Download modules first for layer caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the whole project and build the grader binary
+COPY . .
+RUN CGO_ENABLED=1 GOOS=linux \
+    go build -o /grader ./cmd/grader
+
+# ── Stage 2: runtime ───────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+# Install shared runtime libraries only (no dev headers)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmupdf-dev \
+    libfreetype6 \
+    libjpeg62-turbo \
+    libopenjp2-7 \
+    libharfbuzz0b \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /grader /grader
+
+ENTRYPOINT ["/grader"]

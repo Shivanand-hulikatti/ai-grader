@@ -1,5 +1,11 @@
+# Go binaries
+bin/
 ./bin
 
+web/node_modules/
+web/dist/
+
+# Environment files
 .env
 .env.local
 .env.development.local
@@ -16,4 +22,23 @@ src/*
 # Ignore all files in the config directory except for .keep
 config/*
 !config/.keep
-./bin
+
+# Python / OCR service
+ocr-service/.venv/
+ocr-service/venv/
+ocr-service/__pycache__/
+ocr-service/**/__pycache__/
+ocr-service/*.pyc
+ocr-service/**/*.pyc
+ocr-service/*.pyo
+ocr-service/.pytest_cache/
+ocr-service/.mypy_cache/
+ocr-service/dist/
+ocr-service/build/
+ocr-service/*.egg-info/
+
+# PaddleOCR downloads model weights into ~/.paddleocr by default; if you
+# override PADDLE_HOME to a local path, make sure it is ignored too.
+ocr-service/.paddleocr/
+ocr-service/paddleocr_output/
+ocr-service/inference/
