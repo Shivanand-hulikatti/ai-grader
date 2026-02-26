@@ -36,9 +36,3 @@ ocr-service/.mypy_cache/
 ocr-service/dist/
 ocr-service/build/
 ocr-service/*.egg-info/
-
-# PaddleOCR downloads model weights into ~/.paddleocr by default; if you
-# override PADDLE_HOME to a local path, make sure it is ignored too.
-ocr-service/.paddleocr/
-ocr-service/paddleocr_output/
-ocr-service/inference/

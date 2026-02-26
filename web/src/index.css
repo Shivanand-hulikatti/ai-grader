@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-stone-50 text-stone-900 font-sans;
+    min-height: 100vh;
+  }
+
+  h1, h2, h3 {
+    @apply font-serif;
+  }
+
+  ::selection {
+    @apply bg-stone-200 text-stone-900;
+  }
+
+  input, textarea, select {
+    @apply outline-none;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-stone-900 text-stone-50 text-sm font-sans font-medium rounded transition-all duration-200 hover:bg-stone-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 text-stone-600 text-sm font-sans font-medium rounded border border-stone-200 bg-transparent transition-all duration-200 hover:bg-stone-100 hover:border-stone-300 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .input-field {
+    @apply w-full px-3.5 py-2.5 text-sm bg-white border border-stone-200 rounded text-stone-900 placeholder-stone-400 transition-colors duration-200 focus:border-stone-400 focus:ring-2 focus:ring-stone-200;
+  }
+
+  .card {
+    @apply bg-white border border-stone-200 rounded-md;
+  }
+
+  .label {
+    @apply block text-xs font-medium text-stone-500 mb-1.5 tracking-wide uppercase;
+  }
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-stone-300 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-stone-400; }

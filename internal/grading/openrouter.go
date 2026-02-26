@@ -15,7 +15,7 @@ import (
 )
 
 // DefaultVisionModel is the OpenRouter model used for vision-based grading.
-const DefaultVisionModel = "openai/gpt-5-nano"
+const DefaultVisionModel = "google/gemini-2.5-flash-lite"
 
 // MaxPagesPerSubmission caps how many PDF pages are sent to the LLM per call.
 // Keeping this low controls cost and stays within context limits.
