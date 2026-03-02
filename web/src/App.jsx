@@ -22,7 +22,6 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Landing — visible to everyone */}
           <Route path="/" element={<LandingPage />} />
 
           {/* Public only */}

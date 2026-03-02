@@ -6,7 +6,10 @@ package pdf
 import (
 	"bytes"
 	"fmt"
+	"image"
+	"image/color"
 	"image/jpeg"
+	"math"
 	"sync"
 
 	"github.com/gen2brain/go-fitz"
@@ -23,11 +26,11 @@ type Renderer struct {
 }
 
 // NewRenderer creates a Renderer with sensible defaults.
-// 150 DPI keeps A4 pages at ~1240×1754 px — sharp enough for handwriting
-// recognition while staying within payload limits when JPEG-compressed.
+// 200 DPI keeps A4 pages at ~1654×2339 px — optimised for handwritten
+// answer sheets while staying within payload limits when JPEG-compressed.
 func NewRenderer() *Renderer {
 	return &Renderer{
-		DPI:      150,
+		DPI:      200,
 		MaxPages: 0,
 	}
 }
@@ -77,10 +80,15 @@ func (r *Renderer) RenderPages(pdfData []byte) ([][]byte, error) {
 				return
 			}
 
+			// Pre-process: enhance contrast (makes faded ink/pencil clearer)
+			// then sharpen edges (crisper character boundaries for the vision model).
+			processed := enhanceContrast(img, 1.4)
+			processed = sharpen(processed)
+
 			var buf bytes.Buffer
 			// JPEG at quality 85 balances file size with readability for handwritten text,
 			// keeping the total request payload well under OpenRouter's gateway limit.
-			if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}); err != nil {
+			if err := jpeg.Encode(&buf, processed, &jpeg.Options{Quality: 85}); err != nil {
 				errs[pageNum] = fmt.Errorf("failed to encode page %d as jpeg: %w", pageNum+1, err)
 				return
 			}
@@ -103,4 +111,97 @@ func (r *Renderer) RenderPages(pdfData []byte) ([][]byte, error) {
 	}
 
 	return pageImages, nil
+}
+
+// ---------------------------------------------------------------------------
+// Image pre-processing helpers for scanned handwritten answer sheets
+// ---------------------------------------------------------------------------
+
+// enhanceContrast applies a linear contrast stretch around the midpoint.
+// factor > 1.0 increases contrast; 1.0 is identity.
+// Makes faded pencil/pen strokes more visible to the vision model.
+func enhanceContrast(src image.Image, factor float64) *image.RGBA {
+	bounds := src.Bounds()
+	dst := image.NewRGBA(bounds)
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := src.At(x, y).RGBA()
+			// RGBA() returns 16-bit pre-multiplied values; shift to 8-bit.
+			rf := float64(r>>8) / 255.0
+			gf := float64(g>>8) / 255.0
+			bf := float64(b>>8) / 255.0
+
+			// Contrast around midpoint 0.5
+			rf = clamp01((rf-0.5)*factor + 0.5)
+			gf = clamp01((gf-0.5)*factor + 0.5)
+			bf = clamp01((bf-0.5)*factor + 0.5)
+
+			dst.SetRGBA(x, y, color.RGBA{
+				R: uint8(rf * 255),
+				G: uint8(gf * 255),
+				B: uint8(bf * 255),
+				A: uint8(a >> 8),
+			})
+		}
+	}
+	return dst
+}
+
+// sharpen applies a 3×3 centre-weighted laplacian kernel to crisp up
+// handwritten character edges.  Kernel:
+//
+//	[  0  -1   0 ]
+//	[ -1   5  -1 ]
+//	[  0  -1   0 ]
+func sharpen(src image.Image) *image.RGBA {
+	bounds := src.Bounds()
+	dst := image.NewRGBA(bounds)
+	w, h := bounds.Dx(), bounds.Dy()
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			// Border pixels: copy as-is to avoid boundary checks.
+			if x == bounds.Min.X || x == bounds.Min.X+w-1 ||
+				y == bounds.Min.Y || y == bounds.Min.Y+h-1 {
+				dst.Set(x, y, src.At(x, y))
+				continue
+			}
+
+			var rr, gg, bb float64
+			for _, k := range [][3]int{
+				{0, -1, -1}, // top
+				{-1, 0, -1}, // left
+				{0, 0, 5},   // centre
+				{1, 0, -1},  // right
+				{0, 1, -1},  // bottom
+			} {
+				r, g, b, _ := src.At(x+k[0], y+k[1]).RGBA()
+				f := float64(k[2])
+				rr += float64(r>>8) * f
+				gg += float64(g>>8) * f
+				bb += float64(b>>8) * f
+			}
+
+			_, _, _, a := src.At(x, y).RGBA()
+			dst.SetRGBA(x, y, color.RGBA{
+				R: uint8(math.Min(math.Max(rr, 0), 255)),
+				G: uint8(math.Min(math.Max(gg, 0), 255)),
+				B: uint8(math.Min(math.Max(bb, 0), 255)),
+				A: uint8(a >> 8),
+			})
+		}
+	}
+	return dst
+}
+
+// clamp01 restricts v to the [0, 1] range.
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
