@@ -87,15 +87,18 @@ type PaperUploadedEvent struct {
 }
 
 type GradingCriterion struct {
-	Name    string `json:"name"`
-	Score   int    `json:"score"`
-	Comment string `json:"comment"`
+	Name     string `json:"name"`
+	Score    int    `json:"score"`
+	MaxScore int    `json:"max_score"`
+	Comment  string `json:"comment"`
 }
 
 type GradingFeedback struct {
-	OverallScore int                `json:"overall_score"`
-	Summary      string             `json:"summary"`
-	Criteria     []GradingCriterion `json:"criteria"`
+	OverallScore     int                `json:"overall_score"`
+	Summary          string             `json:"summary"`
+	ExtractedRules   []string           `json:"extracted_rules,omitempty"`
+	CalculationSteps []string           `json:"calculation_steps,omitempty"`
+	Criteria         []GradingCriterion `json:"criteria"`
 }
 
 type PaperGradedEvent struct {

@@ -102,7 +102,7 @@ services:
       - KAFKA_GRADED_TOPIC=paper-graded
       - KAFKA_CONSUMER_GROUP_ID=grader-consumer-group
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-qwen/qwen3-vl-235b-a22b-thinking}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-x-ai/grok-4.1-fast}
       - GLOBAL_GRADING_RUBRIC=${GLOBAL_GRADING_RUBRIC}
       - AWS_REGION=${AWS_REGION}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}

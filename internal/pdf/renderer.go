@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"image/jpeg"
+	"sync"
 
 	"github.com/gen2brain/go-fitz"
 )
@@ -22,11 +23,11 @@ type Renderer struct {
 }
 
 // NewRenderer creates a Renderer with sensible defaults.
-// 120 DPI keeps A4 pages at ~990×1400 px — enough for LLM reading, small enough
-// to avoid 502s from oversized payloads when encoded as JPEG.
+// 150 DPI keeps A4 pages at ~1240×1754 px — sharp enough for handwriting
+// recognition while staying within payload limits when JPEG-compressed.
 func NewRenderer() *Renderer {
 	return &Renderer{
-		DPI:      120,
+		DPI:      150,
 		MaxPages: 0,
 	}
 }
@@ -50,25 +51,51 @@ func (r *Renderer) RenderPages(pdfData []byte) ([][]byte, error) {
 		limit = r.MaxPages
 	}
 
-	pageImages := make([][]byte, 0, limit)
+	pageImages := make([][]byte, limit)
+	errs := make([]error, limit)
+	var wg sync.WaitGroup
 
 	for i := 0; i < limit; i++ {
-		// ImageDPI renders the page at the specified DPI so we control output size.
-		// Using the bare Image() call renders at the PDF's native resolution, which
-		// for scanned documents can be 300+ DPI and produces multi-MB images.
-		img, err := doc.ImageDPI(i, r.DPI)
+		wg.Add(1)
+		go func(pageNum int) {
+			defer wg.Done()
+
+			// fitz.Document is not thread-safe, so each goroutine needs its own instance
+			localDoc, err := fitz.NewFromMemory(pdfData)
+			if err != nil {
+				errs[pageNum] = fmt.Errorf("failed to open pdf for page %d: %w", pageNum+1, err)
+				return
+			}
+			defer localDoc.Close()
+
+			// ImageDPI renders the page at the specified DPI so we control output size.
+			// Using the bare Image() call renders at the PDF's native resolution, which
+			// for scanned documents can be 300+ DPI and produces multi-MB images.
+			img, err := localDoc.ImageDPI(pageNum, r.DPI)
+			if err != nil {
+				errs[pageNum] = fmt.Errorf("failed to render pdf page %d: %w", pageNum+1, err)
+				return
+			}
+
+			var buf bytes.Buffer
+			// JPEG at quality 85 balances file size with readability for handwritten text,
+			// keeping the total request payload well under OpenRouter's gateway limit.
+			if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85}); err != nil {
+				errs[pageNum] = fmt.Errorf("failed to encode page %d as jpeg: %w", pageNum+1, err)
+				return
+			}
+
+			pageImages[pageNum] = buf.Bytes()
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Check for any errors during concurrent rendering
+	for _, err := range errs {
 		if err != nil {
-			return nil, fmt.Errorf("failed to render pdf page %d: %w", i+1, err)
+			return nil, err
 		}
-
-		var buf bytes.Buffer
-		// JPEG at quality 75 is ~10-20x smaller than lossless PNG for scanned pages,
-		// keeping the total request payload well under OpenRouter's gateway limit.
-		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 75}); err != nil {
-			return nil, fmt.Errorf("failed to encode page %d as jpeg: %w", i+1, err)
-		}
-
-		pageImages = append(pageImages, buf.Bytes())
 	}
 
 	if len(pageImages) == 0 {

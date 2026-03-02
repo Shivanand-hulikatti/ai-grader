@@ -18,6 +18,83 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type uploadedEventEnvelope struct {
+	SubmissionID string                   `json:"submission_id"`
+	S3Key        string                   `json:"s3_key"`
+	UserID       string                   `json:"user_id"`
+	Submission   *uploadedEventSubmission `json:"submission"`
+	S3           *uploadedEventS3         `json:"s3"`
+	Payload      json.RawMessage          `json:"payload"`
+}
+
+type uploadedEventSubmission struct {
+	ID string `json:"id"`
+}
+
+type uploadedEventS3 struct {
+	Key string `json:"key"`
+}
+
+func parsePaperUploadedEvent(message []byte) (models.PaperUploadedEvent, bool) {
+	var direct models.PaperUploadedEvent
+	if err := json.Unmarshal(message, &direct); err == nil {
+		if direct.SubmissionID != "" && direct.S3Key != "" {
+			return direct, true
+		}
+	}
+
+	var env uploadedEventEnvelope
+	if err := json.Unmarshal(message, &env); err != nil {
+		return models.PaperUploadedEvent{}, false
+	}
+
+	event := models.PaperUploadedEvent{
+		SubmissionID: env.SubmissionID,
+		S3Key:        env.S3Key,
+		UserID:       env.UserID,
+	}
+
+	if event.SubmissionID == "" && env.Submission != nil {
+		event.SubmissionID = env.Submission.ID
+	}
+	if event.S3Key == "" && env.S3 != nil {
+		event.S3Key = env.S3.Key
+	}
+
+	if event.SubmissionID != "" && event.S3Key != "" {
+		return event, true
+	}
+
+	if len(env.Payload) > 0 {
+		var nested models.PaperUploadedEvent
+		if err := json.Unmarshal(env.Payload, &nested); err == nil {
+			if nested.SubmissionID != "" && nested.S3Key != "" {
+				return nested, true
+			}
+		}
+
+		var nestedEnv uploadedEventEnvelope
+		if err := json.Unmarshal(env.Payload, &nestedEnv); err == nil {
+			nestedEvent := models.PaperUploadedEvent{
+				SubmissionID: nestedEnv.SubmissionID,
+				S3Key:        nestedEnv.S3Key,
+				UserID:       nestedEnv.UserID,
+			}
+			if nestedEvent.SubmissionID == "" && nestedEnv.Submission != nil {
+				nestedEvent.SubmissionID = nestedEnv.Submission.ID
+			}
+			if nestedEvent.S3Key == "" && nestedEnv.S3 != nil {
+				nestedEvent.S3Key = nestedEnv.S3.Key
+			}
+			if nestedEvent.SubmissionID != "" && nestedEvent.S3Key != "" {
+				return nestedEvent, true
+			}
+		}
+	}
+
+	return models.PaperUploadedEvent{}, false
+}
+
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
@@ -90,9 +167,10 @@ func main() {
 
 	go func() {
 		err := consumer.Start(ctx, func(msgCtx context.Context, message []byte) error {
-			var event models.PaperUploadedEvent
-			if err := json.Unmarshal(message, &event); err != nil {
-				return err
+			event, ok := parsePaperUploadedEvent(message)
+			if !ok {
+				log.Printf("Skipping malformed/legacy paper-uploaded event")
+				return nil
 			}
 
 			if err := service.HandlePaperUploaded(msgCtx, event); err != nil {

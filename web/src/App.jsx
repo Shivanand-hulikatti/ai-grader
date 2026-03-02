@@ -5,16 +5,15 @@ import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import UploadPage from './pages/UploadPage'
 import ResultPage from './pages/ResultPage'
+import LandingPage from './pages/LandingPage'
 
 function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth()
-  if (loading) return null
+  const { user } = useAuth()
   return user ? children : <Navigate to="/login" replace />
 }
 
 function PublicRoute({ children }) {
-  const { user, loading } = useAuth()
-  if (loading) return null
+  const { user } = useAuth()
   return user ? <Navigate to="/dashboard" replace /> : children
 }
 
@@ -23,7 +22,10 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public */}
+          {/* Landing — visible to everyone */}
+          <Route path="/" element={<LandingPage />} />
+
+          {/* Public only */}
           <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
 
@@ -32,9 +34,8 @@ export default function App() {
           <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
           <Route path="/results/:id" element={<ProtectedRoute><ResultPage /></ProtectedRoute>} />
 
-          {/* Redirect root */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          {/* Unknown routes → landing */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

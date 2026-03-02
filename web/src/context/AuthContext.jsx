@@ -1,19 +1,22 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useCallback } from 'react'
 import { authApi } from '../api/client'
 
 const AuthContext = createContext(null)
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
+function readUserFromStorage() {
+  try {
     const stored = localStorage.getItem('user')
-    if (stored) {
-      try { setUser(JSON.parse(stored)) } catch (_) {}
-    }
-    setLoading(false)
-  }, [])
+    return stored ? JSON.parse(stored) : null
+  } catch (_) {
+    return null
+  }
+}
+
+export function AuthProvider({ children }) {
+  // Lazy initializer reads localStorage synchronously on first render —
+  // this eliminates the loading flash that caused "not authenticated" on refresh.
+  const [user, setUser] = useState(readUserFromStorage)
+  const [loading] = useState(false)
 
   const login = useCallback(async (email, password) => {
     const data = await authApi.login({ email, password })
