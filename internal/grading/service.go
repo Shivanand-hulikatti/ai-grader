@@ -97,14 +97,9 @@ func (s *Service) HandlePaperUploaded(ctx context.Context, event models.PaperUpl
 		Feedback:     string(feedbackJSON),
 	}
 
-	gradedEvent := models.PaperGradedEvent{
-		SubmissionID: event.SubmissionID,
-		Feedback:     feedback,
-	}
-
-	// 4. Persist grade and enqueue outbox event atomically.
-	if err := s.repo.SaveGradeAndEvent(ctx, grade, gradedEvent); err != nil {
-		s.failSubmission(ctx, event.SubmissionID, fmt.Sprintf("failed to save grade and outbox event: %v", err))
+	// 4. Persist grade.
+	if err := s.repo.SaveGrade(ctx, grade); err != nil {
+		s.failSubmission(ctx, event.SubmissionID, fmt.Sprintf("failed to save grade: %v", err))
 		return err
 	}
 

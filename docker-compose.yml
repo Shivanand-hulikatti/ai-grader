@@ -99,7 +99,6 @@ services:
       - DATABASE_URL=postgresql://ai-grader:ai-grader@postgres:5432/ai_grader?sslmode=disable
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_TOPIC=paper-uploaded
-      - KAFKA_GRADED_TOPIC=paper-graded
       - KAFKA_CONSUMER_GROUP_ID=grader-consumer-group
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-x-ai/grok-4.1-fast}
@@ -119,7 +118,6 @@ services:
       "echo 'Waiting for Kafka...' &&
        cub kafka-ready -b kafka:29092 1 30 &&
        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic paper-uploaded --partitions 1 --replication-factor 1 &&
-       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic paper-graded  --partitions 1 --replication-factor 1 &&
        echo 'Topics ready.'"
     ]
     restart: on-failure

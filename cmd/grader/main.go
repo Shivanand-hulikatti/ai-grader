@@ -115,11 +115,6 @@ func main() {
 		uploadedTopic = "paper-uploaded"
 	}
 
-	gradedTopic := os.Getenv("KAFKA_GRADED_TOPIC")
-	if gradedTopic == "" {
-		gradedTopic = "paper-graded"
-	}
-
 	groupID := os.Getenv("KAFKA_CONSUMER_GROUP_ID")
 	if groupID == "" {
 		groupID = "grader-consumer-group"
@@ -155,15 +150,8 @@ func main() {
 	consumer := kafka.NewConsumer(kafkaBrokers, uploadedTopic, groupID)
 	defer consumer.Close()
 
-	producer := kafka.NewProducer(kafkaBrokers)
-	defer producer.Close()
-	outboxPublisher := kafka.NewOutboxPublisher(database.Pool, producer)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	go outboxPublisher.Start(ctx, gradedTopic)
-	log.Printf("Outbox publisher started for topic: %s", gradedTopic)
 
 	go func() {
 		err := consumer.Start(ctx, func(msgCtx context.Context, message []byte) error {

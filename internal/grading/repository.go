@@ -4,22 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Shivanand-hulikatti/ai-grader/internal/kafka"
 	"github.com/Shivanand-hulikatti/ai-grader/internal/models"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Repository struct {
-	db     *pgxpool.Pool
-	outbox *kafka.OutboxRepository
+	db *pgxpool.Pool
 }
 
 func NewRepository(db *pgxpool.Pool) *Repository {
-	return &Repository{
-		db:     db,
-		outbox: kafka.NewOutboxRepository(db),
-	}
+	return &Repository{db: db}
 }
 
 // CreateGrade inserts a new grade
@@ -87,7 +82,7 @@ func (r *Repository) MarkSubmissionFailed(ctx context.Context, submissionID, err
 	return err
 }
 
-func (r *Repository) SaveGradeAndEvent(ctx context.Context, grade *models.Grade, eventPayload models.PaperGradedEvent) error {
+func (r *Repository) SaveGrade(ctx context.Context, grade *models.Grade) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -117,14 +112,6 @@ func (r *Repository) SaveGradeAndEvent(ctx context.Context, grade *models.Grade,
 
 	if _, err := tx.Exec(ctx, updateSubmissionQuery, grade.SubmissionID); err != nil {
 		return fmt.Errorf("failed to update submission status: %w", err)
-	}
-
-	eventPayload.GradeID = grade.ID
-	eventPayload.Score = grade.Score
-	eventPayload.Status = "graded"
-
-	if err := r.outbox.CreateEventInTransaction(ctx, tx, grade.SubmissionID, "paper-graded", eventPayload); err != nil {
-		return fmt.Errorf("failed to create outbox event: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

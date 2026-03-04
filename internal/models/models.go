@@ -100,11 +100,3 @@ type GradingFeedback struct {
 	CalculationSteps []string           `json:"calculation_steps,omitempty"`
 	Criteria         []GradingCriterion `json:"criteria"`
 }
-
-type PaperGradedEvent struct {
-	SubmissionID string          `json:"submission_id"`
-	GradeID      string          `json:"grade_id"`
-	Status       string          `json:"status"`
-	Score        int             `json:"score"`
-	Feedback     GradingFeedback `json:"feedback"`
-}
