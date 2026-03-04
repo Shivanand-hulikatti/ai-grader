@@ -127,88 +127,8 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 		pageImages = pageImages[:MaxPagesPerSubmission]
 	}
 
-	// System prompt (plain text message).
-	systemMsg := textMessage{
-		Role: "system",
-		Content: "You are a meticulous, experienced academic examiner grading a student's answer sheet.\n\n" +
-			"GRADING PRINCIPLES:\n" +
-			"1. Read every page of the answer sheet carefully before assigning any scores.\n" +
-			"2. Grade each question INDEPENDENTLY using only the rubric provided.\n" +
-			"3. DO NOT assume the student answered in rubric order. Match each answer to the correct rubric question by topic/content, even if sequence is mixed (e.g., Q3 answered before Q1).\n" +
-			"4. If numbering differs or is missing, infer the best rubric-question match from concepts, formulas, terminology, and working steps.\n" +
-			"5. Mark a question unattempted only when no relevant answer content exists anywhere in the pages.\n" +
-			"6. Award partial credit generously when the student demonstrates understanding, even if the final answer is wrong.\n" +
-			"7. Deduct marks only for clear errors, missing steps, or incorrect conclusions — not for handwriting quality or minor formatting issues.\n" +
-			"8. If a question is attempted but hard to read, make your best effort to interpret it and note any ambiguity.\n" +
-			"9. If the rubric specifies special rules (e.g., 'best 2 of 3', 'mandatory questions', 'internal choice'), apply them precisely.\n" +
-			"10. Include ALL attempted questions in the criteria list, even those dropped by rules (mark them with score 0 and explain why).\n" +
-			"11. The overall_score MUST equal the sum of scores from all counted criteria (after applying any selection rules).\n" +
-			"12. Show your reasoning in calculation_steps so the total is verifiable.\n" +
-			"13. Be fair and consistent — do not penalize beyond what the rubric specifies.\n\n" +
-			"RESPONSE FORMAT: Respond with valid JSON only — no markdown fences, no commentary outside the JSON.",
-	}
-
-	// Build the user message content: text prompt followed by one image per page.
-	userParts := []visionContentPart{
-		{
-			Type: "text",
-			Text: fmt.Sprintf(
-				"=== GRADING RUBRIC / ANSWER SCHEME ===\n%s\n\n"+
-					"=== MAXIMUM POSSIBLE SCORE: %d ===\n\n"+
-					"The following %d image(s) show the student's answer sheet (one image per page).\n\n"+
-					"INSTRUCTIONS:\n"+
-					"1. Carefully read ALL pages before grading.\n"+
-					"2. For each rubric question/criterion, find matching student content anywhere in the answer sheet (order can be mixed).\n"+
-					"3. Match by semantic/topic similarity, not by positional order on the page.\n"+
-					"4. If the student answered in a different sequence (e.g., Q3, then Q1), still map and grade correctly under each rubric criterion.\n"+
-					"5. Award marks based on correctness, completeness, and demonstrated understanding.\n"+
-					"6. Give partial credit where the student shows correct methodology even if the final answer is wrong.\n"+
-					"7. If no relevant content exists for a rubric criterion across all pages, mark it as unattempted with score 0 and explain briefly.\n"+
-					"8. Verify that your overall_score equals the sum of the individual criteria scores (after applying any rules).\n\n"+
-					"Return ONLY valid JSON with this exact schema:\n"+
-					"{\n"+
-					"  \"overall_score\": <integer 0-%d>,\n"+
-					"  \"summary\": \"<2-3 sentence overall assessment>\",\n"+
-					"  \"extracted_rules\": [\"<any special rules found in the rubric>\"],\n"+
-					"  \"calculation_steps\": [\"<step-by-step score calculation showing how overall_score was derived>\"],\n"+
-					"  \"criteria\": [\n"+
-					"    {\n"+
-					"      \"name\": \"<question/criterion name>\",\n"+
-					"      \"score\": <marks awarded>,\n"+
-					"      \"max_score\": <maximum marks for this criterion>,\n"+
-					"      \"comment\": \"<specific feedback: what was correct, what was wrong, why marks were deducted>\"\n"+
-					"    }\n"+
-					"  ]\n"+
-					"}\n"+
-					"No markdown fences, no extra fields.",
-				rubric, maxScore, len(pageImages), maxScore,
-			),
-		},
-	}
-
-	for i, img := range pageImages {
-		encoded := base64.StdEncoding.EncodeToString(img)
-		userParts = append(userParts, visionContentPart{
-			Type: "image_url",
-			ImageURL: &imageURL{
-				URL: "data:image/jpeg;base64," + encoded,
-			},
-		})
-		_ = i // suppress unused warning
-	}
-
-	userMsg := visionMessage{
-		Role:    "user",
-		Content: userParts,
-	}
-
-	payload := visionChatRequest{
-		Model:       c.model,
-		Messages:    []interface{}{systemMsg, userMsg},
-		Temperature: 0,
-	}
-
-	body, err := json.Marshal(payload)
+	forceOrderAgnosticRetry := false
+	body, err := c.buildVisionRequestBody(rubric, pageImages, maxScore, forceOrderAgnosticRetry)
 	if err != nil {
 		return models.GradingFeedback{}, fmt.Errorf("failed to marshal openrouter request: %w", err)
 	}
@@ -279,6 +199,16 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 			continue
 		}
 
+		if shouldRetryWithOrderAgnosticPrompt(feedback) && !forceOrderAgnosticRetry && attempt < MaxRetries {
+			forceOrderAgnosticRetry = true
+			body, err = c.buildVisionRequestBody(rubric, pageImages, maxScore, forceOrderAgnosticRetry)
+			if err != nil {
+				return models.GradingFeedback{}, fmt.Errorf("failed to marshal fallback openrouter request: %w", err)
+			}
+			lastErr = fmt.Errorf("initial grading looked like false all-zero/unattempted output; retrying with stricter semantic matching prompt")
+			continue
+		}
+
 		// Success — break out of retry loop.
 		lastErr = nil
 		break
@@ -297,4 +227,119 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 	}
 
 	return feedback, nil
+}
+
+func (c *OpenRouterClient) buildVisionRequestBody(rubric string, pageImages [][]byte, maxScore int, forceOrderAgnostic bool) ([]byte, error) {
+	systemPrompt := "You are a meticulous, experienced academic examiner grading a student's answer sheet.\n\n" +
+		"GRADING PRINCIPLES:\n" +
+		"1. Read every page of the answer sheet carefully before assigning any scores.\n" +
+		"2. Grade each question INDEPENDENTLY using only the rubric provided.\n" +
+		"3. DO NOT assume the student answered in rubric order. Match each answer to the correct rubric question by topic/content, even if sequence is mixed (e.g., Q3 answered before Q1).\n" +
+		"4. If numbering differs or is missing, infer the best rubric-question match from concepts, formulas, terminology, and working steps.\n" +
+		"5. Mark a question unattempted only when no relevant answer content exists anywhere in the pages.\n" +
+		"6. Award partial credit generously when the student demonstrates understanding, even if the final answer is wrong.\n" +
+		"7. Deduct marks only for clear errors, missing steps, or incorrect conclusions — not for handwriting quality or minor formatting issues.\n" +
+		"8. If a question is attempted but hard to read, make your best effort to interpret it and note any ambiguity.\n" +
+		"9. If the rubric specifies special rules (e.g., 'best 2 of 3', 'mandatory questions', 'internal choice'), apply them precisely.\n" +
+		"10. Include ALL attempted questions in the criteria list, even those dropped by rules (mark them with score 0 and explain why).\n" +
+		"11. The overall_score MUST equal the sum of scores from all counted criteria (after applying any selection rules).\n" +
+		"12. Show your reasoning in calculation_steps so the total is verifiable.\n" +
+		"13. Be fair and consistent — do not penalize beyond what the rubric specifies.\n"
+
+	if forceOrderAgnostic {
+		systemPrompt += "14. CRITICAL: A fully zero score due only to question-order mismatch is INVALID. Before finalizing, explicitly re-check every rubric criterion against all pages.\n"
+	}
+
+	systemPrompt += "\nRESPONSE FORMAT: Respond with valid JSON only — no markdown fences, no commentary outside the JSON."
+
+	userInstructions :=
+		"=== GRADING RUBRIC / ANSWER SCHEME ===\n%s\n\n" +
+			"=== MAXIMUM POSSIBLE SCORE: %d ===\n\n" +
+			"The following %d image(s) show the student's answer sheet (one image per page).\n\n" +
+			"INSTRUCTIONS:\n" +
+			"1. Carefully read ALL pages before grading.\n" +
+			"2. For each rubric question/criterion, find matching student content anywhere in the answer sheet (order can be mixed).\n" +
+			"3. Match by semantic/topic similarity, not by positional order on the page.\n" +
+			"4. If the student answered in a different sequence (e.g., Q3, then Q1), still map and grade correctly under each rubric criterion.\n" +
+			"5. Award marks based on correctness, completeness, and demonstrated understanding.\n" +
+			"6. Give partial credit where the student shows correct methodology even if the final answer is wrong.\n" +
+			"7. If no relevant content exists for a rubric criterion across all pages, mark it as unattempted with score 0 and explain briefly.\n" +
+			"8. Verify that your overall_score equals the sum of the individual criteria scores (after applying any rules).\n"
+
+	if forceOrderAgnostic {
+		userInstructions += "9. QUALITY CHECK: if all criteria are 0, re-evaluate once and confirm this is due to genuinely missing content, not numbering/order mismatch.\n"
+	}
+
+	userInstructions +=
+		"\nReturn ONLY valid JSON with this exact schema:\n" +
+			"{\n" +
+			"  \"overall_score\": <integer 0-%d>,\n" +
+			"  \"summary\": \"<2-3 sentence overall assessment>\",\n" +
+			"  \"extracted_rules\": [\"<any special rules found in the rubric>\"],\n" +
+			"  \"calculation_steps\": [\"<step-by-step score calculation showing how overall_score was derived>\"],\n" +
+			"  \"criteria\": [\n" +
+			"    {\n" +
+			"      \"name\": \"<question/criterion name>\",\n" +
+			"      \"score\": <marks awarded>,\n" +
+			"      \"max_score\": <maximum marks for this criterion>,\n" +
+			"      \"comment\": \"<specific feedback: what was correct, what was wrong, why marks were deducted>\"\n" +
+			"    }\n" +
+			"  ]\n" +
+			"}\n" +
+			"No markdown fences, no extra fields."
+
+	systemMsg := textMessage{Role: "system", Content: systemPrompt}
+
+	userParts := []visionContentPart{{
+		Type: "text",
+		Text: fmt.Sprintf(userInstructions, rubric, maxScore, len(pageImages), maxScore),
+	}}
+
+	for _, img := range pageImages {
+		encoded := base64.StdEncoding.EncodeToString(img)
+		userParts = append(userParts, visionContentPart{
+			Type: "image_url",
+			ImageURL: &imageURL{
+				URL: "data:image/jpeg;base64," + encoded,
+			},
+		})
+	}
+
+	userMsg := visionMessage{Role: "user", Content: userParts}
+
+	payload := visionChatRequest{
+		Model:       c.model,
+		Messages:    []interface{}{systemMsg, userMsg},
+		Temperature: 0,
+	}
+
+	return json.Marshal(payload)
+}
+
+func shouldRetryWithOrderAgnosticPrompt(feedback models.GradingFeedback) bool {
+	if feedback.OverallScore != 0 || len(feedback.Criteria) == 0 {
+		return false
+	}
+
+	allZero := true
+	hasUnattemptedLanguage := false
+
+	for _, criterion := range feedback.Criteria {
+		if criterion.Score != 0 {
+			allZero = false
+			break
+		}
+
+		comment := strings.ToLower(strings.TrimSpace(criterion.Comment))
+		if strings.Contains(comment, "not attempted") ||
+			strings.Contains(comment, "no attempt") ||
+			strings.Contains(comment, "not answered") ||
+			strings.Contains(comment, "unanswered") ||
+			strings.Contains(comment, "does not correspond") ||
+			strings.Contains(comment, "doesn't correspond") {
+			hasUnattemptedLanguage = true
+		}
+	}
+
+	return allZero && hasUnattemptedLanguage
 }
