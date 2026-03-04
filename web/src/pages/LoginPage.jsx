@@ -73,6 +73,11 @@ export default function LoginPage() {
           </button>
         </form>
 
+        <div className="mt-4 rounded border border-stone-200 bg-white px-3 py-2 text-xs text-stone-500">
+          <p>Email: test@email.com</p>
+          <p>Password: test1234</p>
+        </div>
+
         <p className="mt-6 text-center text-sm text-stone-400">
           No account?{' '}
           <Link to="/register" className="text-stone-700 hover:text-stone-900 underline underline-offset-2">
