@@ -71,10 +71,8 @@ jobs:
             cd /opt/ai-grader/app
 
             mkdir -p "$HOME/.docker/cli-plugins"
-            if ! docker buildx version >/dev/null 2>&1; then
-              curl -fsSL https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64 -o "$HOME/.docker/cli-plugins/docker-buildx"
-              chmod +x "$HOME/.docker/cli-plugins/docker-buildx"
-            fi
+            curl -fsSL https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64 -o "$HOME/.docker/cli-plugins/docker-buildx"
+            chmod +x "$HOME/.docker/cli-plugins/docker-buildx"
             docker buildx version
 
             cat > .env <<'EOF'
