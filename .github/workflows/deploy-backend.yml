@@ -11,10 +11,37 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_PORT: ${{ secrets.EC2_PORT != '' && secrets.EC2_PORT || '22' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate deploy secrets
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
+        run: |
+          set -euo pipefail
+          missing=()
+
+          [[ -z "${EC2_HOST}" ]] && missing+=("EC2_HOST")
+          [[ -z "${EC2_USER}" ]] && missing+=("EC2_USER")
+          [[ -z "${EC2_SSH_KEY}" ]] && missing+=("EC2_SSH_KEY")
+          [[ -z "${PROD_ENV_FILE}" ]] && missing+=("PROD_ENV_FILE")
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required GitHub Actions secrets: ${missing[*]}"
+            exit 1
+          fi
+
+          if ! grep -q "BEGIN .* PRIVATE KEY" <<< "${EC2_SSH_KEY}"; then
+            echo "::error::EC2_SSH_KEY does not look like a private key. Paste full PEM content including BEGIN/END lines."
+            exit 1
+          fi
 
       - name: Upload backend files to EC2
         uses: appleboy/scp-action@v0.1.7
@@ -22,7 +49,8 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_PORT || 22 }}
+          passphrase: ${{ secrets.EC2_SSH_PASSPHRASE }}
+          port: ${{ env.DEPLOY_PORT }}
           source: "docker-compose.yml,docker-compose.prod.yml,Dockerfile.grader,go.mod,go.sum,cmd,internal,migrations,Makefile,skills.md,Readme.md"
           target: "/opt/ai-grader/app"
           rm: true
@@ -33,7 +61,8 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_PORT || 22 }}
+          passphrase: ${{ secrets.EC2_SSH_PASSPHRASE }}
+          port: ${{ env.DEPLOY_PORT }}
           script_stop: true
           script: |
             set -euo pipefail
