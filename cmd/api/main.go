@@ -7,6 +7,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Shivanand-hulikatti/ai-grader/internal/auth"
@@ -92,9 +93,57 @@ func main() {
 
 	log.Printf("API Gateway starting on :%s", port)
 
-	if err := http.ListenAndServe(":"+port, router); err != nil {
+	handler := withCORS(router)
+
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func withCORS(next http.Handler) http.Handler {
+	allowedOrigins := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		if origin != "" && isOriginAllowed(origin, allowedOrigins) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func parseAllowedOrigins(raw string) map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, origin := range strings.Split(raw, ",") {
+		o := strings.TrimSpace(origin)
+		if o == "" {
+			continue
+		}
+		allowed[o] = struct{}{}
+	}
+	return allowed
+}
+
+func isOriginAllowed(origin string, allowed map[string]struct{}) bool {
+	if len(allowed) == 0 {
+		return false
+	}
+	if _, ok := allowed["*"]; ok {
+		return true
+	}
+	_, ok := allowed[origin]
+	return ok
 }
 
 // newProxy builds a reverse proxy for the given backend URL.
