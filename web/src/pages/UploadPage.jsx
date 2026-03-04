@@ -41,7 +41,7 @@ export default function UploadPage() {
       fd.append('max_score', form.max_score)
       if (form.answer_scheme) fd.append('answer_scheme', form.answer_scheme)
       const data = await uploadApi.upload(fd)
-      navigate(`/results/${data.submission?.id ?? ''}`)
+      navigate(`/app/results/${data.submission?.id ?? ''}`)
     } catch (err) {
       setError(err.message || 'Upload failed')
     } finally {

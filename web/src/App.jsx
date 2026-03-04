@@ -30,8 +30,8 @@ export default function App() {
 
           {/* Protected */}
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
-          <Route path="/results/:id" element={<ProtectedRoute><ResultPage /></ProtectedRoute>} />
+          <Route path="/app/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
+          <Route path="/app/results/:id" element={<ProtectedRoute><ResultPage /></ProtectedRoute>} />
 
           {/* Unknown routes → landing */}
           <Route path="*" element={<Navigate to="/" replace />} />

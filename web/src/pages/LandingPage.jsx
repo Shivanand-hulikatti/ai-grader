@@ -60,7 +60,7 @@ export default function LandingPage() {
             {user ? (
               <>
                 <Link to="/dashboard" className="btn-ghost px-3.5 py-2">Dashboard</Link>
-                <Link to="/upload" className="btn-primary px-3.5 py-2">Upload</Link>
+                <Link to="/app/upload" className="btn-primary px-3.5 py-2">Upload</Link>
               </>
             ) : (
               <>
@@ -89,7 +89,7 @@ export default function LandingPage() {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Link to={user ? '/upload' : '/register'} className="btn-primary px-5 py-2.5">
+            <Link to={user ? '/app/upload' : '/register'} className="btn-primary px-5 py-2.5">
               {user ? 'Upload paper' : 'Create account'}
             </Link>
             <Link to={user ? '/dashboard' : '/login'} className="btn-ghost px-5 py-2.5">

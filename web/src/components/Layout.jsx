@@ -26,7 +26,7 @@ export default function Layout({ children }) {
               Results
             </Link>
             <Link
-              to="/upload"
+              to="/app/upload"
               className="text-sm text-stone-500 hover:text-stone-900 transition-colors"
             >
               Upload
