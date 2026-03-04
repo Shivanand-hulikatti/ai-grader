@@ -70,6 +70,21 @@ jobs:
             set -euo pipefail
             cd /opt/ai-grader/app
 
+            echo "=== Disk usage before cleanup ==="
+            df -h
+            docker system df || true
+
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml down --remove-orphans || true
+            docker container prune -f || true
+            docker image prune -af || true
+            docker volume prune -f || true
+            docker builder prune -af || true
+            docker buildx prune -af || true
+
+            echo "=== Disk usage after cleanup ==="
+            df -h
+            docker system df || true
+
             mkdir -p "$HOME/.docker/cli-plugins"
             curl -fsSL https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64 -o "$HOME/.docker/cli-plugins/docker-buildx"
             chmod +x "$HOME/.docker/cli-plugins/docker-buildx"
