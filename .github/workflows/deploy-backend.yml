@@ -1,0 +1,52 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "web/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload backend files to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          source: "docker-compose.yml,docker-compose.prod.yml,Dockerfile.grader,go.mod,go.sum,cmd,internal,migrations,Makefile,skills.md,Readme.md"
+          target: "/opt/ai-grader/app"
+          rm: true
+
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/ai-grader/app
+
+            cat > .env <<'EOF'
+            ${{ secrets.PROD_ENV_FILE }}
+            EOF
+
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
+
+            if ! docker exec ai-grader-db psql -U ai-grader -d ai_grader -tAc "select 1 from pg_tables where schemaname='public' and tablename='users'" | grep -q 1; then
+              docker exec -i ai-grader-db psql -U ai-grader -d ai_grader < migrations/001_schema.sql
+            fi
+
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps

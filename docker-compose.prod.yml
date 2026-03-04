@@ -1,0 +1,33 @@
+services:
+  postgres:
+    restart: unless-stopped
+    ports: []
+
+  zookeeper:
+    restart: unless-stopped
+    ports: []
+
+  kafka:
+    restart: unless-stopped
+    ports: []
+
+  api-gateway:
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+
+  upload-service:
+    restart: unless-stopped
+    ports: []
+
+  grader-service:
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKERS=kafka:29092
+
+  kafka-init:
+    restart: on-failure
+
+  results-service:
+    restart: unless-stopped
+    ports: []
