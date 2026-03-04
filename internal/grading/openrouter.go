@@ -134,14 +134,17 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 			"GRADING PRINCIPLES:\n" +
 			"1. Read every page of the answer sheet carefully before assigning any scores.\n" +
 			"2. Grade each question INDEPENDENTLY using only the rubric provided.\n" +
-			"3. Award partial credit generously when the student demonstrates understanding, even if the final answer is wrong.\n" +
-			"4. Deduct marks only for clear errors, missing steps, or incorrect conclusions — not for handwriting quality or minor formatting issues.\n" +
-			"5. If a question is attempted but hard to read, make your best effort to interpret it and note any ambiguity.\n" +
-			"6. If the rubric specifies special rules (e.g., 'best 2 of 3', 'mandatory questions', 'internal choice'), apply them precisely.\n" +
-			"7. Include ALL attempted questions in the criteria list, even those dropped by rules (mark them with score 0 and explain why).\n" +
-			"8. The overall_score MUST equal the sum of scores from all counted criteria (after applying any selection rules).\n" +
-			"9. Show your reasoning in calculation_steps so the total is verifiable.\n" +
-			"10. Be fair and consistent — do not penalize beyond what the rubric specifies.\n\n" +
+			"3. DO NOT assume the student answered in rubric order. Match each answer to the correct rubric question by topic/content, even if sequence is mixed (e.g., Q3 answered before Q1).\n" +
+			"4. If numbering differs or is missing, infer the best rubric-question match from concepts, formulas, terminology, and working steps.\n" +
+			"5. Mark a question unattempted only when no relevant answer content exists anywhere in the pages.\n" +
+			"6. Award partial credit generously when the student demonstrates understanding, even if the final answer is wrong.\n" +
+			"7. Deduct marks only for clear errors, missing steps, or incorrect conclusions — not for handwriting quality or minor formatting issues.\n" +
+			"8. If a question is attempted but hard to read, make your best effort to interpret it and note any ambiguity.\n" +
+			"9. If the rubric specifies special rules (e.g., 'best 2 of 3', 'mandatory questions', 'internal choice'), apply them precisely.\n" +
+			"10. Include ALL attempted questions in the criteria list, even those dropped by rules (mark them with score 0 and explain why).\n" +
+			"11. The overall_score MUST equal the sum of scores from all counted criteria (after applying any selection rules).\n" +
+			"12. Show your reasoning in calculation_steps so the total is verifiable.\n" +
+			"13. Be fair and consistent — do not penalize beyond what the rubric specifies.\n\n" +
 			"RESPONSE FORMAT: Respond with valid JSON only — no markdown fences, no commentary outside the JSON.",
 	}
 
@@ -155,10 +158,13 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 					"The following %d image(s) show the student's answer sheet (one image per page).\n\n"+
 					"INSTRUCTIONS:\n"+
 					"1. Carefully read ALL pages before grading.\n"+
-					"2. For each question/criterion, compare the student's answer against the rubric.\n"+
-					"3. Award marks based on correctness, completeness, and demonstrated understanding.\n"+
-					"4. Give partial credit where the student shows correct methodology even if the final answer is wrong.\n"+
-					"5. Verify that your overall_score equals the sum of the individual criteria scores (after applying any rules).\n\n"+
+					"2. For each rubric question/criterion, find matching student content anywhere in the answer sheet (order can be mixed).\n"+
+					"3. Match by semantic/topic similarity, not by positional order on the page.\n"+
+					"4. If the student answered in a different sequence (e.g., Q3, then Q1), still map and grade correctly under each rubric criterion.\n"+
+					"5. Award marks based on correctness, completeness, and demonstrated understanding.\n"+
+					"6. Give partial credit where the student shows correct methodology even if the final answer is wrong.\n"+
+					"7. If no relevant content exists for a rubric criterion across all pages, mark it as unattempted with score 0 and explain briefly.\n"+
+					"8. Verify that your overall_score equals the sum of the individual criteria scores (after applying any rules).\n\n"+
 					"Return ONLY valid JSON with this exact schema:\n"+
 					"{\n"+
 					"  \"overall_score\": <integer 0-%d>,\n"+
