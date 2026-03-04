@@ -105,8 +105,13 @@ type openRouterError struct {
 
 // GradeWithImages sends one or more PDF page images (as raw PNG bytes) to the
 // configured vision model together with the grading rubric and returns a
-// structured GradingFeedback. Each element of pageImages is the raw PNG bytes
-// of a single page rendered from the student's PDF answer sheet.
+// structured GradingFeedback.
+//
+// Grading strategy:
+//   - Pass 1 (standard): order-agnostic matching via SCAN→MAP→GRADE methodology.
+//   - Pass 2 (fallback): triggered automatically if Pass 1 returns suspicious
+//     all-zero "not attempted" output that likely indicates an order-mismatch
+//     false-negative. Uses a more forceful prompt with explicit re-scan instructions.
 func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, pageImages [][]byte, maxScore int) (models.GradingFeedback, error) {
 	if c.apiKey == "" {
 		return models.GradingFeedback{}, fmt.Errorf("openrouter api key is required")
@@ -115,102 +120,46 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 		return models.GradingFeedback{}, fmt.Errorf("no page images provided for grading")
 	}
 
-	// Detach from any short-lived caller deadline (e.g. Kafka consumer context)
-	// and give the LLM call its own generous but bounded timeout.
-	// If the parent context is cancelled (e.g. shutdown) that will still propagate.
 	llmCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	ctx = llmCtx
 
-	// Enforce page cap to control cost and stay within token limits.
 	if len(pageImages) > MaxPagesPerSubmission {
 		pageImages = pageImages[:MaxPagesPerSubmission]
 	}
 
-	// System prompt (plain text message).
-	systemMsg := textMessage{
-		Role: "system",
-		Content: "You are a meticulous, experienced academic examiner grading a student's answer sheet.\n\n" +
-			"GRADING PRINCIPLES:\n" +
-			"1. Read every page of the answer sheet carefully before assigning any scores.\n" +
-			"2. Grade each question INDEPENDENTLY using only the rubric provided.\n" +
-			"3. DO NOT assume the student answered in rubric order. Match each answer to the correct rubric question by topic/content, even if sequence is mixed (e.g., Q3 answered before Q1).\n" +
-			"4. If numbering differs or is missing, infer the best rubric-question match from concepts, formulas, terminology, and working steps.\n" +
-			"5. Mark a question unattempted only when no relevant answer content exists anywhere in the pages.\n" +
-			"6. Award partial credit generously when the student demonstrates understanding, even if the final answer is wrong.\n" +
-			"7. Deduct marks only for clear errors, missing steps, or incorrect conclusions — not for handwriting quality or minor formatting issues.\n" +
-			"8. If a question is attempted but hard to read, make your best effort to interpret it and note any ambiguity.\n" +
-			"9. If the rubric specifies special rules (e.g., 'best 2 of 3', 'mandatory questions', 'internal choice'), apply them precisely.\n" +
-			"10. Include ALL attempted questions in the criteria list, even those dropped by rules (mark them with score 0 and explain why).\n" +
-			"11. The overall_score MUST equal the sum of scores from all counted criteria (after applying any selection rules).\n" +
-			"12. Show your reasoning in calculation_steps so the total is verifiable.\n" +
-			"13. Be fair and consistent — do not penalize beyond what the rubric specifies.\n\n" +
-			"RESPONSE FORMAT: Respond with valid JSON only — no markdown fences, no commentary outside the JSON.",
+	// Pass 1 — standard order-agnostic grading.
+	feedback, err := c.runGradingPass(ctx, rubric, pageImages, maxScore, false)
+	if err != nil {
+		return models.GradingFeedback{}, err
 	}
 
-	// Build the user message content: text prompt followed by one image per page.
-	userParts := []visionContentPart{
-		{
-			Type: "text",
-			Text: fmt.Sprintf(
-				"=== GRADING RUBRIC / ANSWER SCHEME ===\n%s\n\n"+
-					"=== MAXIMUM POSSIBLE SCORE: %d ===\n\n"+
-					"The following %d image(s) show the student's answer sheet (one image per page).\n\n"+
-					"INSTRUCTIONS:\n"+
-					"1. Carefully read ALL pages before grading.\n"+
-					"2. For each rubric question/criterion, find matching student content anywhere in the answer sheet (order can be mixed).\n"+
-					"3. Match by semantic/topic similarity, not by positional order on the page.\n"+
-					"4. If the student answered in a different sequence (e.g., Q3, then Q1), still map and grade correctly under each rubric criterion.\n"+
-					"5. Award marks based on correctness, completeness, and demonstrated understanding.\n"+
-					"6. Give partial credit where the student shows correct methodology even if the final answer is wrong.\n"+
-					"7. If no relevant content exists for a rubric criterion across all pages, mark it as unattempted with score 0 and explain briefly.\n"+
-					"8. Verify that your overall_score equals the sum of the individual criteria scores (after applying any rules).\n\n"+
-					"Return ONLY valid JSON with this exact schema:\n"+
-					"{\n"+
-					"  \"overall_score\": <integer 0-%d>,\n"+
-					"  \"summary\": \"<2-3 sentence overall assessment>\",\n"+
-					"  \"extracted_rules\": [\"<any special rules found in the rubric>\"],\n"+
-					"  \"calculation_steps\": [\"<step-by-step score calculation showing how overall_score was derived>\"],\n"+
-					"  \"criteria\": [\n"+
-					"    {\n"+
-					"      \"name\": \"<question/criterion name>\",\n"+
-					"      \"score\": <marks awarded>,\n"+
-					"      \"max_score\": <maximum marks for this criterion>,\n"+
-					"      \"comment\": \"<specific feedback: what was correct, what was wrong, why marks were deducted>\"\n"+
-					"    }\n"+
-					"  ]\n"+
-					"}\n"+
-					"No markdown fences, no extra fields.",
-				rubric, maxScore, len(pageImages), maxScore,
-			),
-		},
+	// Pass 2 — triggered only when Pass 1 looks like a false all-zero result.
+	if isSuspiciousAllZero(feedback) {
+		fallback, fallbackErr := c.runGradingPass(ctx, rubric, pageImages, maxScore, true)
+		if fallbackErr == nil && !isSuspiciousAllZero(fallback) {
+			return fallback, nil
+		}
+		// If fallback also fails or still all-zero, return original Pass 1 result.
 	}
 
-	for i, img := range pageImages {
-		encoded := base64.StdEncoding.EncodeToString(img)
-		userParts = append(userParts, visionContentPart{
-			Type: "image_url",
-			ImageURL: &imageURL{
-				URL: "data:image/jpeg;base64," + encoded,
-			},
-		})
-		_ = i // suppress unused warning
-	}
+	return feedback, nil
+}
 
-	userMsg := visionMessage{
-		Role:    "user",
-		Content: userParts,
-	}
+// runGradingPass executes a single LLM grading call with up to MaxRetries on
+// malformed JSON. When forceScan is true a stronger re-scan prompt is used.
+func (c *OpenRouterClient) runGradingPass(ctx context.Context, rubric string, pageImages [][]byte, maxScore int, forceScan bool) (models.GradingFeedback, error) {
+	messages := c.buildGradingMessages(rubric, pageImages, maxScore, forceScan)
 
 	payload := visionChatRequest{
 		Model:       c.model,
-		Messages:    []interface{}{systemMsg, userMsg},
+		Messages:    messages,
 		Temperature: 0,
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return models.GradingFeedback{}, fmt.Errorf("failed to marshal openrouter request: %w", err)
+		return models.GradingFeedback{}, fmt.Errorf("failed to marshal grading request: %w", err)
 	}
 
 	var feedback models.GradingFeedback
@@ -241,7 +190,6 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			lastErr = fmt.Errorf("openrouter api returned status %d: %s", resp.StatusCode, string(respBody))
-			// Don't retry on 4xx client errors (except 429 rate limit)
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
 				return models.GradingFeedback{}, lastErr
 			}
@@ -262,7 +210,6 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 		}
 
 		content := strings.TrimSpace(parsed.Choices[0].Message.Content)
-		// Strip any accidental markdown code fences the model may have added.
 		content = strings.TrimPrefix(content, "```json")
 		content = strings.TrimPrefix(content, "```")
 		content = strings.TrimSuffix(content, "```")
@@ -273,13 +220,11 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 			continue
 		}
 
-		// Validate basic sanity: criteria should not be empty.
 		if len(feedback.Criteria) == 0 {
 			lastErr = fmt.Errorf("grading returned zero criteria (attempt %d/%d)", attempt+1, MaxRetries+1)
 			continue
 		}
 
-		// Success — break out of retry loop.
 		lastErr = nil
 		break
 	}
@@ -288,7 +233,6 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 		return models.GradingFeedback{}, lastErr
 	}
 
-	// Clamp score to valid range.
 	if feedback.OverallScore < 0 {
 		feedback.OverallScore = 0
 	}
@@ -297,4 +241,163 @@ func (c *OpenRouterClient) GradeWithImages(ctx context.Context, rubric string, p
 	}
 
 	return feedback, nil
+}
+
+// buildGradingMessages constructs the system + user messages for the LLM.
+// When forceScan is true it uses a two-step SCAN→MAP→GRADE prompt and adds
+// an explicit re-check directive to prevent false "not attempted" outputs.
+func (c *OpenRouterClient) buildGradingMessages(rubric string, pageImages [][]byte, maxScore int, forceScan bool) []interface{} {
+	systemContent := strings.Join([]string{
+		"You are a strict but fair academic examiner grading a student's answer sheet.",
+		"",
+		"CORE RULES — follow every rule without exception:",
+		"",
+		"RULE 1 — READ FIRST, GRADE SECOND.",
+		"  Scan every single page completely before assigning any mark.",
+		"",
+		"RULE 2 — ORDER-AGNOSTIC MATCHING (most important rule).",
+		"  The student may have answered questions in ANY order.",
+		"  Q1 in the rubric may be answered last on the sheet; Q3 may come first.",
+		"  NEVER match by position or sequence. Always match by TOPIC and CONTENT.",
+		"  Identify what topic each written section is about, then match it to the",
+		"  correct rubric criterion — regardless of the question number written by",
+		"  the student or the physical position on the page.",
+		"",
+		"RULE 3 — SEMANTIC MATCHING.",
+		"  If a student writes about 'deadlock', that maps to the Deadlock criterion.",
+		"  If a student writes about 'semaphores', check whether the rubric has a",
+		"  semaphore criterion; if not, map it to the closest related criterion.",
+		"  Concepts, formulas, diagrams, and keywords all count as evidence.",
+		"",
+		"RULE 4 — PARTIAL CREDIT.",
+		"  Award marks whenever the student shows correct understanding of any part,",
+		"  even if the final answer or steps are incomplete or wrong.",
+		"",
+		"RULE 5 — UNATTEMPTED ONLY AS LAST RESORT.",
+		"  Only mark a criterion as unattempted (score 0) when you have confirmed",
+		"  there is absolutely zero relevant content anywhere across ALL pages.",
+		"  If you find even partial relevant content, award partial marks.",
+		"",
+		"RULE 6 — SCORE CONSISTENCY.",
+		"  overall_score MUST equal the arithmetic sum of all counted criteria scores.",
+		"  Show your calculation in calculation_steps.",
+		"",
+		"OUTPUT: Respond with valid JSON only. No markdown fences, no extra text.",
+	}, "\n")
+
+	var userText string
+	if forceScan {
+		userText = fmt.Sprintf(
+			"=== GRADING RUBRIC / ANSWER SCHEME ===\n%s\n\n"+
+				"=== MAXIMUM POSSIBLE SCORE: %d ===\n\n"+
+				"The following %d image(s) show the student's answer sheet.\n\n"+
+				"MANDATORY TWO-STEP PROCESS — do both steps before writing the JSON:\n\n"+
+				"STEP 1 — CONTENT SCAN (do this mentally before grading):\n"+
+				"  For each page, list every distinct section/paragraph the student wrote.\n"+
+				"  Note the topic/subject of each section (e.g. scheduling, deadlock, IPC...).\n"+
+				"  Ignore numbering written by the student — focus only on the actual topic.\n\n"+
+				"STEP 2 — MAP AND GRADE:\n"+
+				"  For each rubric criterion, find the student section from Step 1 whose\n"+
+				"  topic best matches that criterion. Grade based on correctness/completeness.\n"+
+				"  A different question number ≠ unattempted. Topic mismatch is the only\n"+
+				"  valid reason to mark something as unattempted.\n\n"+
+				"IMPORTANT: If a previous grading attempt returned all zeros, that was WRONG.\n"+
+				"  Re-scan all pages now. If the sheet has written content, it must be graded.\n\n"+
+				"Return ONLY valid JSON matching this schema exactly:\n"+
+				"{\n"+
+				"  \"overall_score\": <integer 0-%d>,\n"+
+				"  \"summary\": \"<2-3 sentence overall assessment>\",\n"+
+				"  \"extracted_rules\": [\"<special rubric rules found, if any>\"],\n"+
+				"  \"calculation_steps\": [\"<step-by-step score derivation>\"],\n"+
+				"  \"criteria\": [\n"+
+				"    {\n"+
+				"      \"name\": \"<rubric criterion name>\",\n"+
+				"      \"score\": <marks awarded>,\n"+
+				"      \"max_score\": <max marks for this criterion>,\n"+
+				"      \"comment\": \"<what matched, what was correct/incorrect, why marks given/deducted>\"\n"+
+				"    }\n"+
+				"  ]\n"+
+				"}\n"+
+				"No markdown fences, no extra fields.",
+			rubric, maxScore, len(pageImages), maxScore,
+		)
+	} else {
+		userText = fmt.Sprintf(
+			"=== GRADING RUBRIC / ANSWER SCHEME ===\n%s\n\n"+
+				"=== MAXIMUM POSSIBLE SCORE: %d ===\n\n"+
+				"The following %d image(s) show the student's answer sheet.\n\n"+
+				"GRADING PROCESS:\n"+
+				"1. Read ALL pages completely before assigning any score.\n"+
+				"2. For each rubric criterion, search the ENTIRE answer sheet for relevant content.\n"+
+				"   The student may have answered in a different order than the rubric —\n"+
+				"   match by TOPIC and CONTENT, never by position or student-written question number.\n"+
+				"3. If the student answered Q3 first and Q1 last, map each section to the\n"+
+				"   correct rubric criterion by what the section is actually about.\n"+
+				"4. Award partial credit wherever the student shows understanding of any sub-part.\n"+
+				"5. Mark as unattempted ONLY if zero relevant content exists anywhere across all pages.\n"+
+				"6. overall_score = sum of all counted criteria scores (show working in calculation_steps).\n\n"+
+				"Return ONLY valid JSON matching this schema exactly:\n"+
+				"{\n"+
+				"  \"overall_score\": <integer 0-%d>,\n"+
+				"  \"summary\": \"<2-3 sentence overall assessment>\",\n"+
+				"  \"extracted_rules\": [\"<special rubric rules found, if any>\"],\n"+
+				"  \"calculation_steps\": [\"<step-by-step score derivation>\"],\n"+
+				"  \"criteria\": [\n"+
+				"    {\n"+
+				"      \"name\": \"<rubric criterion name>\",\n"+
+				"      \"score\": <marks awarded>,\n"+
+				"      \"max_score\": <max marks for this criterion>,\n"+
+				"      \"comment\": \"<what matched, what was correct/incorrect, why marks given/deducted>\"\n"+
+				"    }\n"+
+				"  ]\n"+
+				"}\n"+
+				"No markdown fences, no extra fields.",
+			rubric, maxScore, len(pageImages), maxScore,
+		)
+	}
+
+	userParts := []visionContentPart{{Type: "text", Text: userText}}
+
+	for _, img := range pageImages {
+		encoded := base64.StdEncoding.EncodeToString(img)
+		userParts = append(userParts, visionContentPart{
+			Type:     "image_url",
+			ImageURL: &imageURL{URL: "data:image/jpeg;base64," + encoded},
+		})
+	}
+
+	return []interface{}{
+		textMessage{Role: "system", Content: systemContent},
+		visionMessage{Role: "user", Content: userParts},
+	}
+}
+
+// isSuspiciousAllZero returns true when every criterion scored 0 AND at least
+// one comment contains language that suggests an order/numbering mismatch rather
+// than genuinely unattempted work. This is used to trigger a fallback grading pass.
+func isSuspiciousAllZero(f models.GradingFeedback) bool {
+	if f.OverallScore != 0 || len(f.Criteria) == 0 {
+		return false
+	}
+	for _, c := range f.Criteria {
+		if c.Score != 0 {
+			return false
+		}
+	}
+	// All criteria scored 0 — check if comments hint at a mismatch false-negative.
+	mismatchPhrases := []string{
+		"not attempted", "no attempt", "not answered", "unanswered",
+		"does not correspond", "doesn't correspond", "not related",
+		"unrelated", "wrong question", "different question",
+		"not matching", "no relevant", "does not match",
+	}
+	for _, c := range f.Criteria {
+		lower := strings.ToLower(c.Comment)
+		for _, phrase := range mismatchPhrases {
+			if strings.Contains(lower, phrase) {
+				return true
+			}
+		}
+	}
+	return false
 }
