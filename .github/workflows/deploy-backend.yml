@@ -12,16 +12,18 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      DEPLOY_PORT: ${{ secrets.EC2_PORT != '' && secrets.EC2_PORT || '22' }}
+      DEPLOY_HOST: ${{ vars.EC2_HOST != '' && vars.EC2_HOST || secrets.EC2_HOST }}
+      DEPLOY_USER: ${{ vars.EC2_USER != '' && vars.EC2_USER || secrets.EC2_USER }}
+      DEPLOY_PORT: ${{ vars.EC2_PORT != '' && vars.EC2_PORT || secrets.EC2_PORT != '' && secrets.EC2_PORT || '22' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate deploy secrets
+      - name: Validate deploy config
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ env.DEPLOY_HOST }}
+          EC2_USER: ${{ env.DEPLOY_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           PROD_ENV_FILE: ${{ secrets.PROD_ENV_FILE }}
         run: |
@@ -34,7 +36,7 @@ jobs:
           [[ -z "${PROD_ENV_FILE}" ]] && missing+=("PROD_ENV_FILE")
 
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing required GitHub Actions secrets: ${missing[*]}"
+            echo "::error::Missing required deploy configuration. Expected EC2_HOST/EC2_USER (vars or secrets), plus EC2_SSH_KEY and PROD_ENV_FILE as secrets. Missing: ${missing[*]}"
             exit 1
           fi
 
@@ -46,8 +48,8 @@ jobs:
       - name: Upload backend files to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           passphrase: ${{ secrets.EC2_SSH_PASSPHRASE }}
           port: ${{ env.DEPLOY_PORT }}
@@ -58,8 +60,8 @@ jobs:
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           passphrase: ${{ secrets.EC2_SSH_PASSPHRASE }}
           port: ${{ env.DEPLOY_PORT }}
@@ -67,6 +69,13 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/ai-grader/app
+
+            mkdir -p "$HOME/.docker/cli-plugins"
+            if ! docker buildx version >/dev/null 2>&1; then
+              curl -fsSL https://github.com/docker/buildx/releases/download/v0.21.1/buildx-v0.21.1.linux-amd64 -o "$HOME/.docker/cli-plugins/docker-buildx"
+              chmod +x "$HOME/.docker/cli-plugins/docker-buildx"
+            fi
+            docker buildx version
 
             cat > .env <<'EOF'
             ${{ secrets.PROD_ENV_FILE }}
