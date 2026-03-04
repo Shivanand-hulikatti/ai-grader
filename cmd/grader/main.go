@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Shivanand-hulikatti/ai-grader/internal/database"
 	"github.com/Shivanand-hulikatti/ai-grader/internal/grading"
@@ -154,23 +155,36 @@ func main() {
 	defer cancel()
 
 	go func() {
-		err := consumer.Start(ctx, func(msgCtx context.Context, message []byte) error {
-			event, ok := parsePaperUploadedEvent(message)
-			if !ok {
-				log.Printf("Skipping malformed/legacy paper-uploaded event")
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+
+			err := consumer.Start(ctx, func(msgCtx context.Context, message []byte) error {
+				event, ok := parsePaperUploadedEvent(message)
+				if !ok {
+					log.Printf("Skipping malformed/legacy paper-uploaded event")
+					return nil
+				}
+
+				if err := service.HandlePaperUploaded(msgCtx, event); err != nil {
+					return err
+				}
+
+				log.Printf("Processed grading for submission: %s", event.SubmissionID)
 				return nil
+			})
+
+			if err == nil || ctx.Err() != nil {
+				return
 			}
 
-			if err := service.HandlePaperUploaded(msgCtx, event); err != nil {
-				return err
+			log.Printf("Kafka consumer stopped with error: %v. Retrying in 5s...", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
 			}
-
-			log.Printf("Processed grading for submission: %s", event.SubmissionID)
-			return nil
-		})
-		if err != nil {
-			log.Printf("Kafka consumer stopped with error: %v", err)
-			cancel()
 		}
 	}()
 
