@@ -1,6 +1,10 @@
 # AI Paper Grader
+---
+## Demo
 
-Upload a student's answer sheet (PDF), get back an AI-generated score and structured feedback — automatically.
+https://github.com/user-attachments/assets/0ff2b7ba-00c1-4312-be02-2b2bf74d93ee
+
+Upload a student's answer sheet (PDF), get back an AI-generated score and structured feedback automatically.
 
 Built with Go. Designed around a microservices architecture with async grading via Kafka and vision-based LLM evaluation.
 
