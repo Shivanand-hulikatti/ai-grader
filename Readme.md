@@ -1,183 +1,131 @@
-## Project Structure
+# AI Paper Grader
 
-```text
-ai-paper-evaluator/
-├── cmd/
-│   ├── gateway/
-│   │   └── main.go
-│   ├── upload-service/
-│   │   └── main.go
-│   ├── grading-service/
-│   │   └── main.go
-│   └── results-service/
-│       └── main.go
-│
-├── internal/
-│   ├── models/
-│   │   └── models.go
-│   │
-│   ├── database/
-│   │   ├── db.go              # PGX connection
-│   │
-│   ├── auth/
-│   │   ├── jwt.go              # JWT token handling
-│   │   ├── password.go         # Password hashing
-│   │   ├── repository.go       # Database ops
-│   │   └── middleware.go       # Auth middleware
-│   │
-│   ├── upload/
-│   │   ├── service.go          # Business logic
-│   │   └── repository.go       # Database operations
-│   │
-│   ├── grading/
-│   │   ├── handler.go
-│   │   ├── service.go
-│   │   ├── repository.go
-│   │   └── openai.go           # OpenAI client
-│   │
-│   ├── results/
-│   │   ├── handler.go
-│   │   ├── service.go
-│   │   └── repository.go
-│   │
-│   ├── s3/
-│   │   └── client.go           # S3 operations
-│   │
-│   ├── kafka/
-│   │   ├── producer.go         # Kafka producer
-│   │   ├── consumer.go         # Kafka consumer
-│   │   └── outbox.go           # Outbox pattern
-│   │
-│   └── pdf/
-│       └── parser.go           # PDF text extraction
-│
-├── migrations/
-│   ├── 001_schema.sql
-│   └── 001_schema.down.sql
-│
-├── .env.example
-├── .gitignore
-├── docker-compose.yml
-├── Makefile
-├── go.mod
-├── go.sum
-└── README.md
+Upload a student's answer sheet (PDF), get back an AI-generated score and structured feedback — automatically.
+
+Built with Go. Designed around a microservices architecture with async grading via Kafka and vision-based LLM evaluation.
+
+---
+
+## How it works
+
+```mermaid
+flowchart LR
+    Client -->|JWT| Gateway
+    Gateway -->|proxy| Upload
+    Gateway -->|proxy| Results
+
+    Upload -->|store PDF| S3
+    Upload -->|outbox event| Kafka
+
+    Kafka -->|consume| Grader
+    Grader -->|fetch PDF| S3
+    Grader -->|render pages → images| LLM["OpenRouter LLM"]
+    LLM -->|score + feedback| Grader
+    Grader -->|write grade| DB[(Postgres)]
+
+    Results -->|read| DB
 ```
 
-## Results Service API
+1. Client uploads a PDF through the gateway
+2. Upload service stores it in S3 and fires a `paper.uploaded` Kafka event via the **outbox pattern**
+3. Grader service picks it up, renders each PDF page to an image, and sends them to an OpenRouter vision LLM with the rubric
+4. Score and structured feedback land in Postgres
+5. Client polls `/results` to get the grade
 
-All `/results` endpoints are protected and must be called through the API gateway with a valid JWT.
+---
 
-### 1) List user results
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Services
+        A[API Gateway :8080]
+        B[Upload Service :8081]
+        C[Grader Service]
+        D[Results Service :8083]
+    end
+
+    subgraph Infra
+        K[Kafka]
+        P[(Postgres)]
+        S[S3]
+    end
+
+    A --> B
+    A --> D
+    B --> S
+    B --> K
+    K --> C
+    C --> S
+    C --> P
+    D --> P
+```
+
+| Service | Role |
+|---|---|
+| API Gateway | Auth, JWT validation, reverse proxy to internal services |
+| Upload Service | Accepts PDFs, validates, stores to S3, writes outbox event |
+| Grader Service | Kafka consumer — renders PDF pages, calls vision LLM, saves grade |
+| Results Service | Read-only API for submission status and grades |
+
+---
+
+## Tech stack
+
+- **Go** — all services
+- **PostgreSQL** (pgx) — submissions, grades, outbox table
+- **Kafka** — async decoupling between upload and grading
+- **AWS S3** — PDF storage
+- **OpenRouter** — vision LLM (sends rendered page images + rubric)
+- **go-fitz** — PDF → image rendering
+- **JWT** — access + refresh token auth
+- **Docker Compose** — local infra
+
+---
+
+## Design decisions worth noting
+
+**Outbox pattern** — instead of publishing directly to Kafka after a DB write (two-phase risk), the upload service writes an event row in the same transaction. A background publisher polls and forwards to Kafka. No lost events on crash.
+
+**Vision-based grading** — PDF pages are rendered to PNG images and sent as base64 to the LLM. This handles handwritten answers, diagrams, and non-selectable text naturally.
+
+**Single gateway** — auth lives in one place. Internal services trust the forwarded request; they don't re-validate JWTs.
+
+---
+
+## Running locally
 
 ```bash
-curl -X GET "http://localhost:8080/results?limit=20&offset=0" \
-  -H "Authorization: Bearer <ACCESS_TOKEN>"
-```
-
-Response shape:
-
-```json
-{
-  "results": [
-    {
-      "submission": {
-        "id": "...",
-        "user_id": "...",
-        "status": "graded",
-        "created_at": "2026-02-23T12:00:00Z"
-      },
-      "grade": {
-        "id": "...",
-        "submission_id": "...",
-        "score": 84,
-        "feedback": "{\"overall_score\":84,\"summary\":\"...\",\"criteria\":[...]}"
-      }
-    }
-  ],
-  "count": 1
-}
-```
-
-### 2) Get a single submission result
-
-```bash
-curl -X GET "http://localhost:8080/results/<submission_id>" \
-  -H "Authorization: Bearer <ACCESS_TOKEN>"
-```
-
-Response shape:
-
-```json
-{
-  "submission": {
-    "id": "...",
-    "user_id": "...",
-    "status": "graded",
-    "created_at": "2026-02-23T12:00:00Z"
-  },
-  "grade": {
-    "id": "...",
-    "submission_id": "...",
-    "score": 84,
-    "feedback": "{\"overall_score\":84,\"summary\":\"...\",\"criteria\":[...]}"
-  }
-}
-```
-
-If grading is still in progress, `submission.status` may be `uploaded` or `processing` and `grade` may be `null`.
-
-## Quick Local Setup
-
-### Prerequisites
-
-- Go 1.25+
-- Docker + Docker Compose
-- AWS S3 bucket and credentials
-- Google Vision API key
-- OpenRouter API key
-
-### 1) Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Update `.env` with real values for:
-
-- `DATABASE_URL`
-- `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`
-- `GOOGLE_VISION_API_KEY`
-- `OPENROUTER_API_KEY`
-- `GLOBAL_GRADING_RUBRIC`
-
-### 2) Start local infrastructure
-
-```bash
+# 1. Start infra
 docker compose up -d postgres zookeeper kafka
-```
 
-### 3) Run migrations
-
-```bash
+# 2. Migrate
 docker exec -i ai-grader-db psql -U ai-grader -d ai_grader < migrations/001_schema.sql
-```
 
-### 4) Start services (separate terminals)
+# 3. Copy and fill env
+cp .env.example .env
 
-```bash
+# 4. Run services (separate terminals)
+go run ./cmd/api
 go run ./cmd/upload
 go run ./cmd/grader
 go run ./cmd/results
-go run ./cmd/api
 ```
 
-### 5) Smoke check
+**Required env vars:** `DATABASE_URL`, `JWT_SECRET`, `AWS_*`, `S3_BUCKET_NAME`, `OPENROUTER_API_KEY`, `GLOBAL_GRADING_RUBRIC`
 
-```bash
-curl http://localhost:8080/health
-curl http://localhost:8081/health
-curl http://localhost:8083/health
+---
+
+## API
+
+```
+POST /auth/register
+POST /auth/login
+POST /auth/refresh
+
+POST /upload              # multipart/form-data — pdf + optional answer_scheme
+GET  /results             # list user's submissions
+GET  /results/:id         # single result with score + feedback
 ```
 
-Then register/login via gateway, upload a PDF, and query `/results`.
+All `/upload` and `/results` routes require `Authorization: Bearer <token>`.
